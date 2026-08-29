@@ -116,6 +116,12 @@ export class AudioEngine {
    * Microphone / line-in monitoring is disabled to prevent feedback howl.
    * The desired volume is remembered so switching back re-applies it.
    */
+  setSynthBPM(bpm: number) {
+    if (this.synth) {
+      this.synth.setBPM(bpm);
+    }
+  }
+
   setMonitoring(on: boolean) {
     this.monitorEnabled = on;
     this.applyVolume();
@@ -363,20 +369,23 @@ export class AudioEngine {
     return weight > 0 ? Math.sqrt(sum / weight) : 0;
   }
 
-  update(dt: number, elapsed: number) {
-    const a = this.analyser;
-    if (!a || !this.ctx || !this.mode) {
+  update(dt: number, elapsed: number, profile: "smooth" | "standard" | "dynamic" | "hyper" = "dynamic"): void {
+    // apply smooth beat decay
+    if (audioState.beat > 0) {
+      audioState.beat = Math.max(0, audioState.beat - dt * 4.5);
+    }
+
+    if (!this.analyser) {
       audioState.beat *= 0.9;
       audioState.time = elapsed;
       return;
     }
 
-    a.getByteFrequencyData(this.freqData);
-    a.getFloatFrequencyData(this.floatFreq);
-    a.getFloatTimeDomainData(this.timeData);
+    this.analyser.getByteFrequencyData(this.freqData);
+    this.analyser.getFloatFrequencyData(this.floatFreq);
+    this.analyser.getFloatTimeDomainData(this.timeData);
 
-    // waveform for HUD scope
-    const wf = audioState.waveform;
+    let wf = audioState.waveform;
     let rms = 0;
     const stride = Math.max(1, Math.floor(this.timeData.length / wf.length));
     for (let i = 0; i < wf.length; i++) {
@@ -386,10 +395,13 @@ export class AudioEngine {
     }
     rms = Math.sqrt(rms / wf.length);
 
-    // adaptive normalisation so quiet mics still drive the scene
-    this.adaptiveMax = lerp(this.adaptiveMax, Math.max(0.12, rms * 2.4), 0.008);
+    // Profile-based AGC (Automatic Gain Control)
+    const targetMax = Math.max(0.035, rms * (profile === "hyper" ? 4.5 : profile === "smooth" ? 2.5 : 3.5));
+    const agcRelease = profile === "hyper" ? 0.003 : profile === "smooth" ? 0.001 : 0.0015;
+    const agcAttack = profile === "hyper" ? 0.15 : profile === "smooth" ? 0.04 : 0.08;
+    this.adaptiveMax = lerp(this.adaptiveMax, targetMax, targetMax < this.adaptiveMax ? agcAttack : agcRelease);
 
-    const sens = audioState.sensitivity;
+    const sens = audioState.sensitivity * (profile === "hyper" ? 1.4 : profile === "smooth" ? 1.1 : 1.25);
     const raw: Record<BandKey, number> = {
       sub: this.bandEnergy(BANDS.sub[0], BANDS.sub[1]),
       bass: this.bandEnergy(BANDS.bass[0], BANDS.bass[1]),
@@ -397,14 +409,37 @@ export class AudioEngine {
       high: this.bandEnergy(BANDS.high[0], BANDS.high[1]),
     };
 
-    // per-band attack / release envelopes
-    const attack: Record<BandKey, number> = { sub: 0.55, bass: 0.45, mid: 0.35, high: 0.5 };
-    const release: Record<BandKey, number> = { sub: 0.12, bass: 0.1, mid: 0.08, high: 0.07 };
+    // per-band attack / release envelopes based on profile
+    let attack: Record<BandKey, number>;
+    let release: Record<BandKey, number>;
+    
+    if (profile === "smooth") {
+      attack = { sub: 0.25, bass: 0.20, mid: 0.15, high: 0.25 };
+      release = { sub: 0.05, bass: 0.04, mid: 0.03, high: 0.03 };
+    } else if (profile === "hyper") {
+      attack = { sub: 0.85, bass: 0.75, mid: 0.65, high: 0.85 };
+      release = { sub: 0.25, bass: 0.20, mid: 0.15, high: 0.15 };
+    } else if (profile === "standard") {
+      attack = { sub: 0.45, bass: 0.35, mid: 0.25, high: 0.4 };
+      release = { sub: 0.10, bass: 0.08, mid: 0.06, high: 0.05 };
+    } else { // dynamic (default)
+      attack = { sub: 0.55, bass: 0.45, mid: 0.35, high: 0.5 };
+      release = { sub: 0.12, bass: 0.1, mid: 0.08, high: 0.07 };
+    }
 
     (Object.keys(raw) as BandKey[]).forEach((k) => {
       const target = clamp((raw[k] / this.adaptiveMax) * sens);
       const prev = this.smoothed[k];
-      const coeff = target > prev ? attack[k] : release[k];
+      let coeff = target > prev ? attack[k] : release[k];
+      
+      // Apply frequency softening (0 = aggressive/instant, 1 = extremely smooth)
+      const soft = audioState.softening;
+      // map soft (0..1) to a multiplier for the interpolation coefficient
+      // 0 -> coeff * 4.0 (very fast)
+      // 1 -> coeff * 0.1 (very slow)
+      const mult = soft < 0.5 ? lerp(4.0, 1.0, soft * 2.0) : lerp(1.0, 0.1, (soft - 0.5) * 2.0);
+      coeff *= mult;
+
       this.smoothed[k] = lerp(prev, target, clamp(coeff * (dt * 60), 0, 1));
       // rolling history for transient detection
       const hist = this.bandHistory[k];
@@ -418,6 +453,10 @@ export class AudioEngine {
     audioState.high = this.smoothed.high;
     audioState.level = clamp(rms * 2.6 * sens);
     audioState.time = elapsed;
+    const activeBpm = audioState.bpm > 40 ? audioState.bpm : (audioState.synthBpm || 132);
+    const totalBeats = (elapsed * activeBpm) / 60.0;
+    audioState.masterBeat = totalBeats;
+    audioState.beatPhase = totalBeats % 1.0;
 
     // spectrum mirror for the HUD (already 0..255)
     audioState.spectrum.set(this.freqData.subarray(0, audioState.spectrum.length));
@@ -434,11 +473,11 @@ export class AudioEngine {
 
     const energy = raw.sub;
     this.beatEnergy = lerp(this.beatEnergy, energy, 0.4);
-    const now = this.ctx.currentTime;
-    const threshold = mean * (1.28 - clamp(variance * 12, 0, 0.22)) + 0.012;
+    const now = this.ctx?.currentTime ?? 0;
+    const threshold = mean * (1.15 - clamp(variance * 15, 0, 0.28)) + 0.008;
     const sinceLast = now - this.lastBeatAt;
 
-    if (energy > threshold && energy > 0.055 && sinceLast > 0.22) {
+    if (energy > threshold && energy > 0.035 && sinceLast > 0.18) {
       audioState.beat = 1;
       audioState.beats += 1;
       if (this.lastBeatAt > 0) {

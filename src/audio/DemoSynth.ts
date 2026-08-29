@@ -25,6 +25,14 @@ export class DemoSynth {
   private nextNoteTime = 0;
   private step = 0;
   private bpm = 132;
+  
+  setBPM(bpm: number) {
+    this.bpm = Math.max(60, Math.min(200, bpm));
+  }
+  
+  getBPM() {
+    return this.bpm;
+  }
   private running_ = false;
   private delay: DelayNode;
   private delayFb: GainNode;

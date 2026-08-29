@@ -121,14 +121,14 @@ float sdBox(vec3 p, vec3 b, float r){
  * positive along the camera ray.
  */
 float mapScene(vec3 p, out float mat){
-  float z = p.z + uTime * (2.2 + uSub * 9.0 + uBeat * 4.0);
+  float z = p.z + uTime * (1.2 + uSub * 4.5 + uBeat * 2.0);
 
   // ── bending spine (mids fold the tunnel around the drop) ────────────────
   float warp = 0.30 + uWarp * 0.95;
   vec3 q = p;
   q.xy += vec2(
-    sin(p.z * 0.105 + uTime * 0.37),
-    cos(p.z * 0.083 - uTime * 0.29)
+    sin(p.z * 0.105 + uTime * 0.20),
+    cos(p.z * 0.083 - uTime * 0.16)
   ) * warp;
 
   // ── breathing radius (kick) ────────────────────────────────────────────
@@ -165,8 +165,8 @@ float mapScene(vec3 p, out float mat){
 
   // ── far-end monolith (rotating fractal slab) ────────────────────────────
   vec3 m = q;
-  m.xy = rot2(z * 0.22 + uTime * 0.25) * m.xy;
-  m.xz = rot2(z * 0.13 - uTime * 0.17) * m.xz;
+  m.xy = rot2(z * 0.22 + uTime * 0.14) * m.xy;
+  m.xz = rot2(z * 0.13 - uTime * 0.09) * m.xz;
   vec3 mp = vec3(m.xy, mod(m.z + 24.0, 24.0) - 12.0);
   float mono = sdBox(mp, vec3(1.05 + uBass * 0.55, 1.05 + uBass * 0.55, 0.35), 0.12);
   mono = max(mono, -(sdBox(mp, vec3(0.62, 0.62, 1.4), 0.05)));
@@ -202,7 +202,7 @@ vec3 shadeScene(vec3 p, vec3 rd, float mat, float t){
   float ndv = clamp(dot(n, v), 0.0, 1.0);
   float fres = pow(1.0 - ndv, 3.2);
 
-  float z = p.z + uTime * (2.2 + uSub * 9.0 + uBeat * 4.0);
+  float z = p.z + uTime * (1.2 + uSub * 4.5 + uBeat * 2.0);
   float ang = atan(p.y, p.x);
 
   // base brushed-steel albedo
@@ -231,7 +231,7 @@ vec3 shadeScene(vec3 p, vec3 rd, float mat, float t){
   col += uColA * fres * (0.55 + uMid * 1.6 + uBeat * 0.9);
 
   // ── emissive racing stripes along the shell ────────────────────────────
-  float stripe = pow(0.5 + 0.5 * sin(z * 1.35 - uTime * 5.4), 34.0);
+  float stripe = pow(0.5 + 0.5 * sin(z * 1.35 - uTime * 3.2), 34.0);
   float ringBand = smoothstep(0.86, 1.0, sin(ang * 7.0 + z * 0.35));
   col += uColA * stripe * (0.55 + uSub * 2.6 + uBeat * 2.2) * (1.2 - mat * 0.18);
   col += uColC * ringBand * 0.06 * (0.4 + uHigh * 2.2);
@@ -357,7 +357,7 @@ void main(){
   // ── forward flight, wrapping around the camera (kick-driven velocity) ───
   // The camera looks down -Z, so the wrapped depth is negated.
   float span = uSpan;
-  float speed = 3.0 + uSub * 26.0 + uBeat * 10.0;
+  float speed = 1.6 + uSub * 12.0 + uBeat * 4.5;
   float zi = -mod(pos.z + span * 0.08 - uTime * speed, span) + span * 0.08;
 
   // differential rotation → vortex (mids control angular velocity)
@@ -374,6 +374,14 @@ void main(){
   pos += dir * n * (0.55 + uMid * 7.5) * uMorph;
   pos += vec3(n2, snoise(np * 1.9 + 31.7), snoise(np * 2.3 - 17.3))
        * (0.25 + uHigh * 3.4);
+
+  // ── organic fluid turbulence flow field ──
+  vec3 flow = vec3(
+    snoise(pos * 0.08 + vec3(uTime * 0.12, 0.0, 0.0)),
+    snoise(pos * 0.08 + vec3(0.0, uTime * 0.12, 5.2)),
+    snoise(pos * 0.08 + vec3(1.7, 0.0, uTime * 0.12))
+  );
+  pos += flow * (0.25 + uSub * 0.95);
 
   // ── kick shockwave: radial shell kick ───────────────────────────────────
   float wave = sin(radius * 0.55 - uTime * 9.0);
@@ -443,6 +451,8 @@ uniform float uHigh;
 uniform float uBeat;
 uniform float uAmp;
 
+uniform float uLiquid;
+
 varying vec3 vNormal;
 varying vec3 vWorld;
 varying float vNoise;
@@ -454,6 +464,13 @@ vec3 displace(vec3 p){
   float n = fbm3(p * (0.85 + uMid * 0.9) + vec3(0.0, t, -t * 0.6));
   float ribs = sin(p.y * 9.0 + uTime * 2.4) * 0.06;
   float amp = uAmp * (0.16 + uMid * 0.62 + uBass * 0.32);
+  
+  if (uLiquid > 0.5) {
+     amp *= 2.8; 
+     n = fbm3(p * (1.1 + uMid * 1.5) + vec3(t, t * 1.2, t * 0.8));
+     ribs = 0.0;
+  }
+  
   vec3 dir = normalize(p);
   return p + dir * (n * amp + ribs * (0.4 + uBeat));
 }
@@ -520,12 +537,21 @@ void main(){
   float vein = smoothstep(0.62, 0.78, abs(vNoise - 0.5) * 2.0);
   col += mix(uColA, uColB, 0.5) * vein * (0.25 + uMid * 2.4);
 
+  // high-tech digital circuitry/matrix grid overlaid on the core
+  vec2 techUv = vWorld.xy * 8.0 + vWorld.zx * 8.0;
+  float techGrid = step(0.92, fract(techUv.x)) + step(0.92, fract(techUv.y));
+  float techDots = step(0.8, fract(techUv.x * 4.0)) * step(0.8, fract(techUv.y * 4.0));
+  float techGlow = (techGrid * 0.5 + techDots) * uHigh * 1.5;
+  col += uColC * techGlow * (0.2 + fres * 0.8);
+
   // machined scan bands
   float band = 0.86 + 0.14 * sin(vWorld.y * 34.0 - uTime * 6.0);
   col *= band;
 
   if (uWire > 0.5) {
-    col = mix(uColA, uColC, fres) * (0.55 + uHigh * 2.6 + uBeat * 1.6);
+    // Holographic wireframe glitch
+    float wireGlitch = step(0.9, fract(sin(vWorld.y * 100.0 + uTime * 10.0) * 43758.5453)) * uHigh;
+    col = mix(uColA, uColC, fres + wireGlitch) * (0.55 + uHigh * 2.6 + uBeat * 1.6 + wireGlitch * 2.0);
   }
 
   col = max(col, vec3(0.0));
@@ -752,6 +778,7 @@ uniform float uSub;
 uniform float uHigh;
 uniform float uBeat;
 uniform float uLevel;
+uniform vec2  uScreenPos;
 
 varying vec2 vUv;
 
@@ -769,12 +796,39 @@ void main(){
   float blade = exp(-abs(p.x) * 34.0) * exp(-abs(p.y) * 8.5);
 
   float amt = 0.30 + uSub * 0.95 + uBeat * 0.85 + uLevel * 0.30;
+  
+  // Starburst diagonal flares
+  float diag1 = exp(-abs(p.y - p.x) * 45.0) * exp(-abs(p.x + p.y) * 8.0);
+  float diag2 = exp(-abs(p.y + p.x) * 45.0) * exp(-abs(p.x - p.y) * 8.0);
 
-  vec3 col = uColA * (halo * 0.85 + streak * 1.6 * amt)
-           + uColC * (nucleus * 1.9 + blade * 0.9 * amt);
+  // Cinematic Ghosts (Lens Flare)
+  vec2 dir = -uScreenPos; // direction to center
+  float ghosts = 0.0;
+  
+  // Ring 1
+  float d1 = length(p - dir * 0.35);
+  ghosts += smoothstep(0.015, 0.0, abs(d1 - 0.25)) * 0.6;
+  
+  // Ring 2
+  float d2 = length(p - dir * 0.7);
+  ghosts += smoothstep(0.03, 0.0, abs(d2 - 0.15)) * 0.8;
+  
+  // Solid Circle 3
+  float d3 = length(p - dir * 1.1);
+  ghosts += smoothstep(0.12, 0.08, d3) * 1.2;
+  
+  // Mini Ring 4
+  float d4 = length(p + dir * 0.3);
+  ghosts += smoothstep(0.01, 0.0, abs(d4 - 0.08)) * 1.5;
 
-  float a = halo * 0.42 + nucleus + (streak + blade * 0.5) * amt * 0.75;
-  a *= 0.28 + uLevel * 0.72;
+  float ghostIntensity = ghosts * (0.2 + uLevel * 1.5) * amt;
+
+  vec3 col = uColA * (halo * 0.85 + streak * 3.6 * amt)
+           + uColC * (nucleus * 2.9 + blade * 2.2 * amt + ghostIntensity)
+           + mix(uColA, uColC, 0.5) * (diag1 + diag2) * 1.5 * amt;
+
+  float a = halo * 0.42 + nucleus + (streak * 1.5 + blade * 0.8 + diag1 + diag2) * amt * 0.95 + ghostIntensity * 0.5;
+  a *= 0.35 + uLevel * 0.85;
   a *= smoothstep(1.0, 0.72, r);          // hard square-edge kill
   if (a < 0.004) discard;
 
@@ -818,3 +872,392 @@ void main(){
   gl_FragColor = vec4(col, a);
 }
 `;
+
+export const DATARING_VERT = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+export const DATARING_FRAG = /* glsl */ `
+precision highp float;
+uniform float uTime;
+uniform float uBeat;
+uniform float uMid;
+uniform float uHigh;
+uniform vec3 uColA;
+uniform vec3 uColB;
+uniform vec3 uColC;
+varying vec2 vUv;
+
+// procedural tech noise
+float rand(vec2 n) { return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453); }
+
+void main() {
+  vec2 st = vUv * 2.0 - 1.0;
+  float r = length(st);
+  float a = atan(st.y, st.x);
+  
+  // Multiple rotating orbital layers with micro-tech dashes
+  float d1 = step(0.4, fract(a * 24.0 + uTime * 1.5)) * step(0.1, fract(a * 128.0));
+  float d2 = step(0.6, fract(a * 48.0 - uTime * 2.2));
+  float d3 = step(0.8, fract(a * 96.0 + uTime * 0.8));
+  float d4 = step(0.5, fract(a * 6.0 + uTime * 0.3));
+
+  // Concentric tech tracks
+  float ring1 = smoothstep(0.015, 0.0, abs(r - 0.72)) * d1;
+  float ring2 = smoothstep(0.008, 0.0, abs(r - 0.85)) * d2;
+  float ring3 = smoothstep(0.025, 0.0, abs(r - 0.60)) * d3;
+  float ring4 = smoothstep(0.005, 0.0, abs(r - 0.95)) * d4;
+  float ring5 = smoothstep(0.040, 0.0, abs(r - 0.45)) * step(0.9, fract(a * 3.0 + uTime));
+
+  // Digital glitch artifacts on the rings triggered by high frequencies
+  float glitch = rand(vec2(floor(a * 20.0), floor(uTime * 10.0))) * uHigh;
+  float mask = ring1 + ring2 + ring3 + ring4 + ring5 + (glitch * 0.5 * step(0.6, r));
+  
+  float intensity = 0.4 + uBeat * 1.2 + uMid * 0.8;
+  
+  vec3 col = mix(uColA, uColB, sin(a * 3.0 + uTime * 2.0) * 0.5 + 0.5);
+  col = mix(col, uColC, ring3 + ring5 * 0.5); // inject third color into inner rings
+  
+  gl_FragColor = vec4(col * intensity * 2.0, mask * intensity);
+}
+`;
+
+export const FLUX_VERT = /* glsl */ `
+precision highp float;
+uniform float uTime;
+uniform float uHigh;
+uniform float uFlux;
+
+attribute vec3 aRand;
+
+varying float vIntensity;
+varying vec2 vUv;
+
+${SIMPLEX_3D}
+
+void main() {
+  vUv = uv;
+  
+  // Only activate a fraction of the beams based on high frequency energy
+  float activation = smoothstep(0.2, 0.8, uHigh * uFlux + aRand.z * 0.5);
+  
+  // Length of the beam
+  float len = 0.5 + aRand.x * 35.0 * uHigh * uFlux * activation;
+  
+  vec3 pos = position;
+  
+  // Base scale
+  pos.z *= len;
+  
+  // Lightning jitter (zig-zag)
+  float t = uTime * 20.0 + aRand.y * 100.0;
+  float zigX = snoise(vec3(pos.z * 0.4, t, aRand.x * 20.0));
+  float zigY = snoise(vec3(pos.z * 0.4, t + 42.0, aRand.z * 20.0));
+  
+  // Scale jitter by distance from center to make it branch outward
+  pos.x += zigX * 0.35 * pos.z * uFlux;
+  pos.y += zigY * 0.35 * pos.z * uFlux;
+  
+  vIntensity = activation * max(0.0, 1.0 - (pos.z / (len + 0.001)));
+  
+  vec4 wp = instanceMatrix * vec4(pos, 1.0);
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}
+`;
+
+export const FLUX_FRAG = /* glsl */ `
+precision highp float;
+uniform vec3 uColA;
+uniform vec3 uColC;
+uniform float uHigh;
+uniform float uFlux;
+
+varying float vIntensity;
+varying vec2 vUv;
+
+void main() {
+  if (vIntensity <= 0.01) discard;
+  
+  // Core of the lightning is white/cyan, edges are colored
+  vec3 col = mix(uColA, vec3(1.0), 0.5);
+  col = mix(col, uColC, abs(vUv.y - 0.5) * 2.0);
+  
+  float alpha = vIntensity * uFlux * uHigh * 3.0;
+  gl_FragColor = vec4(col * alpha * 2.5, alpha);
+}
+`;
+
+export const VORTEX_VERT = /* glsl */ `
+uniform float uTime;
+uniform float uSub;
+uniform float uMid;
+uniform float uHigh;
+uniform vec2 uMouse;
+uniform float uMagnetic;
+uniform float uParticleSize;
+attribute float aRand;
+varying float vAlpha;
+void main() {
+   vec3 p = position;
+   
+   // Smooth fluid spiral rotation
+   float r = length(p.xz);
+   float angle = uTime * (0.25 + aRand * 0.35) + r * (0.8 - uSub * 0.2);
+   float s = sin(angle);
+   float c = cos(angle);
+   p.xz = mat2(c, -s, s, c) * p.xz;
+   
+   // Sub bass pulls the galaxy inward gracefully with fluid expansion pulse
+   float pulse = 1.0 - uSub * 0.35 + sin(uTime * 4.0 + r) * 0.08 * uSub;
+   p.xz *= max(0.01, pulse);
+   
+   // Vertical fluid wave scatter on mids
+   p.y += sin(r * 2.0 - uTime * 3.0) * 0.4 + sign(p.y) * uMid * aRand * 1.8;
+
+   // Magnetic field attraction with smooth Hermite falloff
+   if (uMagnetic > 0.5) {
+      vec3 targetPos = vec3(uMouse.x * 15.0, uMouse.y * 10.0, 0.0);
+      float dist = distance(p.xy, targetPos.xy);
+      float pull = smoothstep(16.0, 1.0, dist);
+      pull = pull * pull * (3.0 - 2.0 * pull);
+      p = mix(p, targetPos, pull * (0.4 + uSub * 0.3));
+   }
+
+   vec4 mv = modelViewMatrix * vec4(p, 1.0);
+   gl_Position = projectionMatrix * mv;
+   
+   // Size pulses smoothly with particle size setting and audio
+   gl_PointSize = uParticleSize * (10.0 + uMid * 18.0 * aRand) / max(0.1, -mv.z);
+   
+   // Fade out edges and center
+   float edgeFade = smoothstep(9.0, 1.0, r);
+   float centerFade = smoothstep(0.5, 2.0, r);
+   vAlpha = edgeFade * centerFade * aRand * (0.45 + uSub * 0.75);
+}
+`;
+
+export const VORTEX_FRAG = /* glsl */ `
+uniform vec3 uColB;
+uniform vec3 uColC;
+varying float vAlpha;
+void main() {
+   float d = length(gl_PointCoord - 0.5);
+   if (d > 0.5) discard;
+   float a = smoothstep(0.5, 0.1, d) * vAlpha;
+   gl_FragColor = vec4(mix(uColB, uColC, vAlpha), a);
+}
+`;
+
+export const GRID_VERT = `
+uniform float uTime;
+uniform float uSub;
+varying vec2 vUv;
+varying float vDepth;
+void main() {
+  vUv = uv;
+  vec3 p = position;
+  float wave = sin(p.x * 0.5 + uTime) * cos(p.z * 0.5 - uTime);
+  p.y += wave * uSub * 2.0;
+  vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  vDepth = -mvPosition.z;
+}
+`;
+
+export const GRID_FRAG = `
+uniform vec3 uColA;
+uniform vec3 uColC;
+uniform float uTime;
+uniform float uLevel;
+uniform float uSub;
+varying vec2 vUv;
+varying float vDepth;
+
+void main() {
+  vec2 gridUv = vUv * 80.0;
+  gridUv.y -= uTime * 3.0; // scroll forward
+  
+  vec2 grid = abs(fract(gridUv - 0.5) - 0.5);
+  float line = smoothstep(0.04, 0.0, min(grid.x, grid.y));
+  float intensity = line;
+  
+  // Fade in distance
+  float fade = exp(-vDepth * 0.04);
+  
+  vec3 col = mix(uColA, uColC, sin(vUv.x * 10.0 + uTime) * 0.5 + 0.5);
+  
+  gl_FragColor = vec4(col * intensity * (0.8 + uSub * 1.5), intensity * fade * 0.9);
+}
+`;
+
+export const BACKDROP_VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+export const BACKDROP_FRAG = `
+uniform vec3 uColA;
+uniform vec3 uColB;
+uniform vec3 uColC;
+uniform float uTime;
+uniform float uSub;
+uniform float uOpacity; // from FadePlane
+uniform float uStrobeMode;
+uniform float uStrobeSpeed;
+uniform float uBass;
+varying vec2 vUv;
+
+void main() {
+   vec2 p = vUv * 2.0 - 1.0;
+   
+   float angle = uTime * 0.1;
+   float s = sin(angle), c = cos(angle);
+   vec2 rp = mat2(c, -s, s, c) * p;
+   
+   float noise = sin(rp.x * 1.5 + uTime * 0.2) * cos(rp.y * 1.5 - uTime * 0.15);
+   float dist = length(p);
+   
+   vec3 grad = mix(uColB * 0.1, uColA * 0.15, smoothstep(-1.0, 1.0, noise));
+   grad = mix(grad, uColC * 0.02, dist * 0.8);
+   
+   // Bass flash
+   grad += uColB * (uSub * 0.08 * (1.0 - dist));
+   
+   // STROBE MODE
+   if (uStrobeMode > 0.5) {
+       float gate = smoothstep(0.6, 1.0, uBass);
+       float flash = step(0.5, sin(uTime * uStrobeSpeed)) * gate;
+       vec3 flashColor = mix(uColA, vec3(1.0), 0.7);
+       grad = mix(grad, flashColor, flash);
+   }
+   
+   gl_FragColor = vec4(grad, uOpacity);
+}
+`;
+
+
+export const RAY_VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+export const RAY_FRAG = `
+uniform vec3 uColA;
+uniform vec3 uColB;
+uniform float uTime;
+uniform float uHigh;
+varying vec2 vUv;
+
+void main() {
+  // vUv.y is the length of the cylinder (0 at bottom, 1 at top)
+  // vUv.x is around the cylinder
+  
+  float noise = sin(vUv.x * 50.0 + uTime * 2.0) * cos(vUv.x * 20.0 - uTime);
+  float beam = smoothstep(0.0, 1.0, noise);
+  
+  // fade out towards the edges (top and bottom of cylinder)
+  float fade = smoothstep(0.0, 0.2, vUv.y) * smoothstep(1.0, 0.0, vUv.y);
+  
+  vec3 col = mix(uColB, uColA, beam);
+  
+  float alpha = beam * fade * (0.1 + uHigh * 0.8);
+  gl_FragColor = vec4(col, alpha);
+}
+`;
+
+export const PORTAL_VERT = /* glsl */ `
+varying vec2 vUv;
+varying vec3 vWorldPos;
+varying vec3 vNormal;
+uniform float uTime;
+uniform float uSub;
+uniform float uHigh;
+
+void main() {
+  vUv = uv;
+  vNormal = normalize(normalMatrix * normal);
+  
+  // Subtle vertex breathing pulse
+  vec3 pos = position;
+  float pulse = sin(position.x * 3.0 + position.y * 3.0 + uTime * 4.0) * (0.02 + uSub * 0.05);
+  pos += normal * pulse;
+  
+  #ifdef USE_INSTANCING
+    vec4 worldPos = instanceMatrix * vec4(pos, 1.0);
+    vWorldPos = worldPos.xyz;
+    gl_Position = projectionMatrix * modelViewMatrix * worldPos;
+  #else
+    vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+    vWorldPos = worldPos.xyz;
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  #endif
+}
+`;
+
+export const PORTAL_FRAG = /* glsl */ `
+${SIMPLEX_3D}
+
+uniform float uTime;
+uniform float uHigh;
+uniform float uSub;
+uniform float uBass;
+uniform float uMid;
+uniform float uBeat;
+uniform vec3 uColA;
+uniform vec3 uColB;
+uniform vec3 uColC;
+uniform vec3 uCamPos;
+
+varying vec2 vUv;
+varying vec3 vWorldPos;
+varying vec3 vNormal;
+
+void main() {
+  vec3 viewDir = normalize(uCamPos - vWorldPos);
+  vec3 norm = normalize(vNormal);
+  
+  // Angle and radius around the portal ring
+  float angle = atan(vWorldPos.y, vWorldPos.x);
+  float radius = length(vWorldPos.xy);
+  
+  // Swirling plasma flow coordinates
+  float swirl = angle * 4.0 + radius * 1.5 - uTime * (1.2 + uHigh * 4.0);
+  vec3 noiseCoord = vec3(
+    cos(swirl) * 1.5 + vWorldPos.x * 0.4,
+    sin(swirl) * 1.5 + vWorldPos.y * 0.4,
+    vWorldPos.z * 0.8 + uTime * (0.6 + uSub * 2.0)
+  );
+  
+  // Multi-octave cosmic plasma turbulence
+  float n1 = snoise(noiseCoord);
+  float n2 = snoise(noiseCoord * 2.4 + vec3(4.2, 1.8, 0.5));
+  float plasma = (n1 * 0.6 + n2 * 0.4) * 0.5 + 0.5;
+  
+  // Energy flux filaments along the torus tube
+  float filaments = pow(abs(sin(vUv.x * 24.0 + uTime * 6.0 + plasma * 3.1415)), 6.0);
+  
+  // Fresnel luminescent rim edge
+  float fresnel = pow(1.0 - max(0.0, abs(dot(viewDir, norm))), 2.2);
+  
+  // Dynamic color gradation: core -> plasma -> outer corona
+  vec3 col = mix(uColA, uColB, plasma);
+  col = mix(col, uColC, filaments * (0.8 + uHigh * 2.0));
+  col += uColC * fresnel * (1.2 + uBeat * 2.0 + uSub * 1.5);
+  
+  // Alpha falloff with audio intensity
+  float alpha = clamp((plasma * 0.7 + filaments * 0.5 + fresnel * 0.8) * (0.35 + uHigh * 0.6 + uBeat * 0.35), 0.0, 1.0);
+  
+  gl_FragColor = vec4(col, alpha);
+}
+`;
+

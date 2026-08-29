@@ -8,7 +8,7 @@
 
 export type InputMode = "synth" | "mic" | "system" | "file";
 
-export type QualityLevel = "eco" | "balanced" | "ultra";
+export type QualityLevel = "eco" | "balanced" | "ultra" | "godmode";
 
 export interface Palette {
   id: string;
@@ -28,6 +28,16 @@ export const PALETTES: Palette[] = [
   { id: "bio", name: "BIOHAZARD", hex: ["#CCFF00", "#00FFC8", "#F8FFE8"] },
   { id: "ice", name: "DEEP ICE", hex: ["#7BDFFF", "#2E5BFF", "#EAF8FF"] },
   { id: "crimson", name: "CRIMSON CHROME", hex: ["#FF0033", "#7A0C1E", "#FFE3E9"] },
+  { id: "vapor", name: "NEON VAPOR", hex: ["#FF00FF", "#00FFFF", "#FFB6C1"] },
+  { id: "matrix", name: "MATRIX CODE", hex: ["#00FF41", "#008F11", "#FFFFFF"] },
+  { id: "cyber", name: "CYBERPUNK", hex: ["#FAFF00", "#FF003C", "#00FFFF"] },
+  { id: "akita", name: "AKITA RED", hex: ["#FF0000", "#220000", "#FFFFFF"] },
+  { id: "quantum", name: "QUANTUM CORE", hex: ["#4B0082", "#00CED1", "#E6E6FA"] },
+  { id: "obsidian", name: "OBSIDIAN CHROME", hex: ["#111115", "#707090", "#D000FF"] },
+  { id: "bismuth", name: "BISMUTH CRYSTAL", hex: ["#00F2FE", "#4FACFE", "#FF0844"] },
+  { id: "gold", name: "LIQUID GOLD", hex: ["#FFD700", "#B8860B", "#FFFFFF"] },
+  { id: "void", name: "VOID MATTER", hex: ["#000000", "#0011FF", "#FF0055"] },
+  { id: "neon", name: "NEON PLATINUM", hex: ["#E5E4E2", "#00FFCC", "#FF00FF"] },
 ];
 
 export const QUALITY_PRESETS: Record<
@@ -37,6 +47,7 @@ export const QUALITY_PRESETS: Record<
   eco: { label: "ECO", dpr: [0.6, 0.9], marchSteps: 44, particles: 42000 },
   balanced: { label: "BALANCED", dpr: [0.85, 1.25], marchSteps: 66, particles: 90000 },
   ultra: { label: "ULTRA", dpr: [1, 2], marchSteps: 92, particles: 160000 },
+  godmode: { label: "GODMODE", dpr: [1.25, 2.5], marchSteps: 128, particles: 200000 },
 };
 
 export interface AudioFrameState {
@@ -68,6 +79,12 @@ export interface AudioFrameState {
   time: number;
   /** User sensitivity multiplier. */
   sensitivity: number;
+  synthBpm: number;
+  softening: number;
+  /** Beat phase 0..1 within current bar unit */
+  beatPhase: number;
+  /** Monotonic master beat count with fractional phase */
+  masterBeat: number;
 }
 
 const BIN_COUNT = 512;
@@ -88,6 +105,10 @@ export const audioState: AudioFrameState = {
   active: false,
   time: 0,
   sensitivity: 1,
+  synthBpm: 132,
+  softening: 0.5,
+  beatPhase: 0,
+  masterBeat: 0,
 };
 
 export function resetAudioState() {
@@ -221,22 +242,42 @@ export function safeStringify(value: unknown, fallback = "{}"): string {
   }
 }
 
-const QUALITY_KEYS: QualityLevel[] = ["eco", "balanced", "ultra"];
+// QUALITY_KEYS removed as it's no longer used
 
-export function loadSettings(fallback: VisualSettings): VisualSettings {
+export function loadSettings(): VisualSettings {
+  const fallback = DEFAULT_SETTINGS;
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Partial<VisualSettings>;
-    const merged: VisualSettings = { ...fallback, ...parsed };
-    // defensive: never trust persisted shapes
-    if (!QUALITY_KEYS.includes(merged.quality)) merged.quality = fallback.quality;
-    if (!Number.isFinite(merged.particles)) merged.particles = fallback.particles;
-    merged.particles = Math.min(200000, Math.max(10000, Math.round(merged.particles)));
-    merged.palette = Math.abs(Math.round(merged.palette)) % PALETTES.length;
-    merged.sensitivity = Math.min(3, Math.max(0.2, merged.sensitivity));
-    merged.bloom = Math.min(2.5, Math.max(0, merged.bloom));
-    merged.intensity = Math.min(1.5, Math.max(0, merged.intensity));
+    const saved = localStorage.getItem(SETTINGS_KEY);
+    if (!saved) return fallback;
+    const parsed = JSON.parse(saved);
+    const merged = { ...fallback, ...parsed };
+    // sanitize
+    merged.palette = Math.max(0, Math.round(merged.palette ?? fallback.palette));
+    merged.sensitivity = Math.min(3, Math.max(0.1, merged.sensitivity ?? fallback.sensitivity));
+    merged.bloom = Math.min(2.5, Math.max(0, merged.bloom ?? fallback.bloom));
+    merged.bloomThreshold = Math.min(1.0, Math.max(0.0, merged.bloomThreshold ?? fallback.bloomThreshold));
+    merged.gamma = Math.min(3.0, Math.max(0.5, merged.gamma ?? fallback.gamma));
+    merged.uiContrast = Math.min(1.0, Math.max(0.2, merged.uiContrast ?? fallback.uiContrast));
+    if (typeof merged.masterClock !== "boolean") merged.masterClock = fallback.masterClock;
+    merged.crystallineGlitch = Math.min(3.0, Math.max(0.0, merged.crystallineGlitch ?? fallback.crystallineGlitch));
+    if (typeof merged.quantumPortal !== "boolean") merged.quantumPortal = fallback.quantumPortal;
+    if (typeof merged.neuralSynapses !== "boolean") merged.neuralSynapses = fallback.neuralSynapses;
+    merged.intensity = Math.min(1.5, Math.max(0, merged.intensity ?? fallback.intensity));
+    merged.trails = Math.min(0.99, Math.max(0, merged.trails ?? fallback.trails));
+    merged.particleSize = Math.min(5.0, Math.max(0.1, merged.particleSize ?? fallback.particleSize));
+    merged.strobeSpeed = Math.min(60.0, Math.max(5.0, merged.strobeSpeed ?? fallback.strobeSpeed));
+    merged.softening = Math.min(1.0, Math.max(0.0, merged.softening ?? fallback.softening));
+    merged.shake = Math.min(3, Math.max(0, merged.shake ?? fallback.shake));
+    merged.speed = Math.min(3, Math.max(0.1, merged.speed ?? fallback.speed));
+    merged.fov = Math.min(130, Math.max(50, merged.fov ?? fallback.fov));
+    merged.aberration = Math.min(3, Math.max(0, merged.aberration ?? fallback.aberration));
+    merged.flux = Math.min(3, Math.max(0, merged.flux ?? fallback.flux));
+    merged.coreSize = Math.min(2.5, Math.max(0.5, merged.coreSize ?? fallback.coreSize));
+    merged.colorShift = Math.min(2, Math.max(0, merged.colorShift ?? fallback.colorShift));
+    merged.noiseLevel = Math.min(3, Math.max(0, merged.noiseLevel ?? fallback.noiseLevel));
+    merged.shape = Math.min(11, Math.max(0, Math.round(merged.shape ?? fallback.shape)));
+    if (!["smooth", "standard", "dynamic", "hyper"].includes(merged.audioProfile)) merged.audioProfile = fallback.audioProfile;
+    if (typeof merged.autoHideUi !== "boolean") merged.autoHideUi = fallback.autoHideUi;
     return merged;
   } catch {
     return fallback;
@@ -245,7 +286,6 @@ export function loadSettings(fallback: VisualSettings): VisualSettings {
 
 export function saveSettings(s: VisualSettings) {
   try {
-    // safeStringify can never throw — even on cyclic or exotic values
     localStorage.setItem(SETTINGS_KEY, safeStringify(s, "{}"));
   } catch {
     /* storage disabled or sandboxed iframe — non fatal */
@@ -259,14 +299,70 @@ export interface VisualSettings {
   sensitivity: number;
   /** bloom energy 0..2 */
   bloom: number;
-  /** morph / warp aggression 0..1.5 */
+  /** morphing factor */
   intensity: number;
+  /** motion blur/trail amount 0..1 */
+  trails: number;
+  /** camera shake amount */
+  shake: number;
+  /** global animation speed multiplier 0.1..3 */
+  speed: number;
+  /** camera field of view 50..130 */
+  fov: number;
+  /** chromatic aberration intensity 0..3 */
+  aberration: number;
+  /** energy flux intensity 0..3 */
+  flux: number;
+  /** core scale 0.5..2.5 */
+  coreSize: number;
+  /** color hue shift speed 0..2 */
+  colorShift: number;
+  /** post-processing noise level 0..3 */
+  noiseLevel: number;
   /** particle budget */
   particles: number;
+  /** base geometry shape index 0..5 */
+  shape: number;
+  /** liquid metal vertex displacement */
+  liquid: boolean;
   glitch: boolean;
   tunnel: boolean;
   field: boolean;
   strobes: boolean;
+  /** core wireframe */
+  wireframe: boolean;
+  /** laser fan */
+  laser: boolean;
+  /** high-tech orbital data rings */
+  rings: boolean;
+  /** floating monolithic obelisks */
+  obelisks: boolean;
+  /** Audio reactivity profile */
+  audioProfile: "smooth" | "standard" | "dynamic" | "hyper";
+  /** temporal low-pass filter (0 = aggressive, 1 = smooth) */
+  softening: number;
+  /** Bloom profile */
+  bloomProfile: "soft" | "hard" | "laser";
+  /** Auto hide UI after 5s */
+  autoHideUi: boolean;
+  /** zen mode hides all UI except minimal overlay */
+  zenMode: boolean;
+  /** energy flux lightning */
+  energyFlux: boolean;
+  /** swirling quantum vortex */
+  vortex: boolean;
+  /** cyber floor grid */
+  grid: boolean;
+  /** magnetic particles */
+  magnetic: boolean;
+  /** god rays */
+  rays: boolean;
+  /** strobe background */
+  strobeMode: boolean;
+  /** strobe pulse speed */
+  strobeSpeed: number;
+  /** particle size */
+  particleSize: number;
   /** adapt resolution / march steps / draw-range to hold 60 fps */
   autoPerf: boolean;
   /** advance the palette once per 32-beat phrase */
@@ -275,19 +371,68 @@ export interface VisualSettings {
   towers: boolean;
   /** core halo + anamorphic flare + kick shockwave */
   glow: boolean;
+  /** minimum luminance threshold for bloom activation 0..1 */
+  bloomThreshold: number;
+  /** gamma correction brightness response curve 0.5..2.5 */
+  gamma: number;
+  /** HUD opacity and blur contrast modifier 0.2..1.0 */
+  uiContrast: number;
+  /** Master clock central beat phase synchronization */
+  masterClock: boolean;
+  /** Crystalline glitch chromatic aberration multiplier 0..3 */
+  crystallineGlitch: number;
+  /** Quantum portal counter-rotating torus rings */
+  quantumPortal: boolean;
+  /** Neural synapses bass-triggered line bursts */
+  neuralSynapses: boolean;
 }
 
 export const DEFAULT_SETTINGS: VisualSettings = {
   palette: 0,
   quality: "balanced",
   sensitivity: 1.25,
-  bloom: 1.15,
-  intensity: 1,
+  bloom: 1.0,
+  bloomThreshold: 0.15,
+  gamma: 1.0,
+  uiContrast: 0.8,
+  masterClock: true,
+  crystallineGlitch: 0,
+  quantumPortal: true,
+  neuralSynapses: true,
+  intensity: 1.0,
+  trails: 0.15,
+  shake: 1.0,
+  speed: 0.70,
+  fov: 74,
+  aberration: 1,
+  flux: 1,
+  coreSize: 1,
+  colorShift: 0,
+  noiseLevel: 1,
+  shape: 0,
+  liquid: false,
   particles: QUALITY_PRESETS.balanced.particles,
   glitch: true,
   tunnel: true,
   field: true,
   strobes: true,
+  wireframe: true,
+  laser: true,
+  rings: true,
+  obelisks: true,
+  audioProfile: "hyper",
+  softening: 0.5,
+  bloomProfile: "soft",
+  autoHideUi: false,
+  zenMode: false,
+  energyFlux: true,
+  vortex: true,
+  grid: true,
+  magnetic: false,
+  rays: true,
+  strobeMode: false,
+  strobeSpeed: 30.0,
+  particleSize: 1.5,
   towers: true,
   glow: true,
   autoPerf: true,

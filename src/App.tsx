@@ -3,7 +3,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { engine, type AudioEngineError } from "./audio/AudioEngine";
 import {
-  DEFAULT_SETTINGS,
   PALETTES,
   QUALITY_PRESETS,
   audioState,
@@ -201,7 +200,8 @@ function HelpSheet({ onClose }: { onClose: () => void }) {
 let toastId = 0;
 
 export default function App() {
-  const [settings, setSettings] = useState<VisualSettings>(() => loadSettings(DEFAULT_SETTINGS));
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [settings, setSettings] = useState<VisualSettings>(() => loadSettings());
   const [mode, setMode] = useState<InputMode | null>(null);
   const [booted, setBooted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -348,6 +348,38 @@ export default function App() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [stopRecording]);
+
+
+  /* ── BREATHE ANIMATION ── */
+  useEffect(() => {
+    let raf: number;
+    let isBreathing = false;
+    let cooldown = 0;
+    
+    const loop = () => {
+      const now = performance.now();
+      const sub = audioState.sub;
+      
+      if (sub > 0.8 && now > cooldown) {
+        if (!isBreathing && containerRef.current) {
+          containerRef.current.classList.remove("animate-breathe");
+          // trigger reflow
+          void containerRef.current.offsetWidth;
+          containerRef.current.classList.add("animate-breathe");
+          isBreathing = true;
+          cooldown = now + 300; // wait for animation to finish
+        }
+      }
+      
+      if (isBreathing && now > cooldown) {
+         isBreathing = false;
+      }
+      
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   /* ── keyboard ────────────────────────────────────────────────────────── */
   const toggleRecordRef = useRef(handleToggleRecord);
@@ -522,7 +554,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#050505]">
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-[#050505]">
       <FaultBoundary
         onSoftFault={(f) =>
           toast({

@@ -1,4 +1,4 @@
-import { useFrame, useThree } from "@react-three/fiber";
+import { useFrame, useThree, createPortal } from "@react-three/fiber";
 import {
   Bloom,
   ChromaticAberration,
@@ -7,9 +7,11 @@ import {
   Noise,
   Scanline,
   Vignette,
+  wrapEffect,
 } from "@react-three/postprocessing";
 import {
   BlendFunction,
+  Effect,
   GlitchMode,
   type BloomEffect,
   type ChromaticAberrationEffect,
@@ -18,6 +20,27 @@ import {
   type ScanlineEffect,
   type VignetteEffect,
 } from "postprocessing";
+
+const GammaShader = {
+  fragmentShader: /* glsl */ `
+    uniform float uGamma;
+    void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+      vec3 col = max(vec3(0.0), inputColor.rgb);
+      outputColor = vec4(pow(col, vec3(1.0 / max(0.01, uGamma))), inputColor.a);
+    }
+  `
+};
+
+class CustomGammaEffect extends Effect {
+  constructor({ gamma = 1.0 } = {}) {
+    super("CustomGammaEffect", GammaShader.fragmentShader, {
+      blendFunction: BlendFunction.NORMAL,
+      uniforms: new Map([["uGamma", new THREE.Uniform(gamma)]]),
+    });
+  }
+}
+
+export const CustomGamma = wrapEffect(CustomGammaEffect);
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { engine } from "../audio/AudioEngine";
@@ -35,9 +58,13 @@ import {
   CORE_FRAG,
   CORE_VERT,
   GLOW_FRAG,
-  GLOW_VERT,
+  GLOW_VERT, VORTEX_VERT, VORTEX_FRAG,
+  GRID_VERT,
+  GRID_FRAG,
+  BACKDROP_VERT,
+  BACKDROP_FRAG,
   LASER_FRAG,
-  LASER_VERT,
+  LASER_VERT, RAY_VERT, RAY_FRAG,
   PARTICLE_FRAG,
   PARTICLE_VERT,
   RING_FRAG,
@@ -48,6 +75,12 @@ import {
   TOWER_VERT,
   TUNNEL_FRAG,
   TUNNEL_VERT,
+  DATARING_VERT,
+  DATARING_FRAG,
+  FLUX_VERT,
+  FLUX_FRAG,
+  PORTAL_VERT,
+  PORTAL_FRAG,
 } from "./shaders";
 
 /* ------------------------------------------------------------------ utils */
@@ -71,7 +104,15 @@ type AudioUniforms = Record<
   | "uColB"
   | "uColC"
   | "uWarp"
-  | "uIntensity",
+  | "uScreenPos"
+  | "uIntensity"
+  | "uMouse"
+  | "uMagnetic"
+  | "uParticleSize"
+  | "uStrobeMode"
+  | "uStrobeSpeed"
+  | "uBeatPhase"
+  | "uMasterBeat",
   THREE.IUniform
 >;
 
@@ -86,12 +127,24 @@ function makeAudioUniforms(): AudioUniforms {
     uBeat: { value: 0 },
     uLevel: { value: 0 },
     uWarp: { value: 0 },
+    uScreenPos: { value: new THREE.Vector2() },
     uIntensity: { value: 1 },
+    uMouse: { value: new THREE.Vector2() },
+    uMagnetic: { value: 0 },
+    uParticleSize: { value: 1.5 },
+    uStrobeMode: { value: 0 },
+    uStrobeSpeed: { value: 30.0 },
+    uBeatPhase: { value: 0 },
+    uMasterBeat: { value: 0 },
     uColA: { value: a },
     uColB: { value: b },
     uColC: { value: c },
   };
 }
+
+const GLOBAL_COLS = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
+let CACHED_PALETTE = -1;
+let BASE_COLS = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
 
 /** Writes the shared audio frame into any material that owns audio uniforms. */
 function pushAudio(u: Record<string, THREE.IUniform>, time: number) {
@@ -104,17 +157,26 @@ function pushAudio(u: Record<string, THREE.IUniform>, time: number) {
   if (u.uBeat) u.uBeat.value = s.beat;
   if (u.uLevel) u.uLevel.value = s.level;
   if (u.uWarp) u.uWarp.value = s.mid * 1.0 + s.beat * 0.35;
+  if (u.uBeatPhase) u.uBeatPhase.value = s.beatPhase;
+  if (u.uMasterBeat) u.uMasterBeat.value = s.masterBeat;
+  
+  if (u.uColA && (u.uColA as any).userData) {
+    u.uColA.value.copy(GLOBAL_COLS[0]).multiplyScalar((u.uColA as any).userData.brighten);
+    u.uColB.value.copy(GLOBAL_COLS[1]).multiplyScalar((u.uColB as any).userData.brighten);
+    u.uColC.value.copy(GLOBAL_COLS[2]).multiplyScalar((u.uColC as any).userData.brighten);
+  }
 }
 
 function applyPalette(
   u: Record<string, THREE.IUniform>,
-  index: number,
+  _index: number,
   brighten = 1,
 ) {
-  const [a, b, c] = paletteColors(index);
-  if (u.uColA) u.uColA.value.copy(a).multiplyScalar(brighten);
-  if (u.uColB) u.uColB.value.copy(b).multiplyScalar(brighten);
-  if (u.uColC) u.uColC.value.copy(c).multiplyScalar(brighten);
+  if (u.uColA) {
+    ((u.uColA as any).userData) = { brighten };
+    ((u.uColB as any).userData) = { brighten };
+    ((u.uColC as any).userData) = { brighten };
+  }
 }
 
 interface SceneProps {
@@ -123,10 +185,12 @@ interface SceneProps {
 
 /* ============================================================ AUDIO DRIVER */
 
-function AudioDriver() {
-  useFrame((state, delta) => {
+function AudioDriver({ settings }: SceneProps) {
+  const vTime = useRef(0);
+  useFrame((_, delta) => {
     const dt = Math.min(delta, 1 / 20);
-    engine.update(dt, state.clock.elapsedTime);
+    vTime.current += dt * (settings.speed ?? 1);
+    engine.update(dt, vTime.current, settings.audioProfile);
   });
   return null;
 }
@@ -177,6 +241,24 @@ function PerfProbe({ settings }: SceneProps) {
         lastPhraseBeat = audioState.beats;
         if (audioState.beats % 32 === 0) perfBridge.onPhrase(audioState.beats);
       }
+    }
+    
+    // Animate global colors
+    if (CACHED_PALETTE !== settings.palette) {
+      CACHED_PALETTE = settings.palette;
+      const [a, b, c] = paletteColors(settings.palette);
+      BASE_COLS[0].copy(a);
+      BASE_COLS[1].copy(b);
+      BASE_COLS[2].copy(c);
+    }
+    const hueOffset = (audioState.time * 0.1 * settings.colorShift) % 1.0;
+    GLOBAL_COLS[0].copy(BASE_COLS[0]);
+    GLOBAL_COLS[1].copy(BASE_COLS[1]);
+    GLOBAL_COLS[2].copy(BASE_COLS[2]);
+    if (hueOffset > 0) {
+      GLOBAL_COLS[0].offsetHSL(hueOffset, 0, 0);
+      GLOBAL_COLS[1].offsetHSL(hueOffset, 0, 0);
+      GLOBAL_COLS[2].offsetHSL(hueOffset, 0, 0);
     }
   });
   return null;
@@ -481,6 +563,7 @@ function Core({ settings }: SceneProps) {
           uCamPos: { value: new THREE.Vector3() },
           uAmp: { value: 1 },
           uWire: { value: 0 },
+          uLiquid: { value: 0 },
         },
       }),
     [],
@@ -496,6 +579,7 @@ function Core({ settings }: SceneProps) {
           uCamPos: { value: new THREE.Vector3() },
           uAmp: { value: 1 },
           uWire: { value: 1 },
+          uLiquid: { value: 0 },
         },
         wireframe: true,
         transparent: true,
@@ -505,9 +589,42 @@ function Core({ settings }: SceneProps) {
     [],
   );
 
-  const detail = settings.quality === "eco" ? 12 : settings.quality === "balanced" ? 20 : 28;
-  const geometry = useMemo(() => new THREE.IcosahedronGeometry(1.55, detail), [detail]);
-  const shell = useMemo(() => new THREE.IcosahedronGeometry(2.5, 2), []);
+  const detail = settings.quality === "eco" ? 12 : settings.quality === "balanced" ? 20 : 32;
+  const geometry = useMemo(() => {
+    switch (settings.shape % 12) {
+      case 0: return new THREE.IcosahedronGeometry(1.55, detail);
+      case 1: return new THREE.TorusKnotGeometry(1.1, 0.35, detail * 4, detail);
+      case 2: return new THREE.SphereGeometry(1.45, detail * 2, detail * 2);
+      case 3: return new THREE.OctahedronGeometry(1.5, detail);
+      case 4: return new THREE.DodecahedronGeometry(1.4, detail);
+      case 5: return new THREE.TetrahedronGeometry(1.6, detail);
+      case 6: return new THREE.ConeGeometry(1.6, 3.2, 4); // Diamond / Pyramid
+      case 7: return new THREE.CylinderGeometry(1.6, 1.6, 3.2, 6); // Hexagonal Prism
+      case 8: return new THREE.TorusGeometry(1.6, 0.15, detail * 2, detail * 4); // Tech Ring
+      case 9: return new THREE.TorusKnotGeometry(1.5, 0.08, 256, 32, 3, 4); // Hyper Knot
+      case 10: return new THREE.IcosahedronGeometry(1.6, 1); // Faceted Sphere
+      case 11: return new THREE.OctahedronGeometry(1.6, 1); // Faceted Diamond
+      default: return new THREE.IcosahedronGeometry(1.55, detail);
+    }
+  }, [detail, settings.shape]);
+  
+  const shell = useMemo(() => {
+    switch (settings.shape % 12) {
+      case 0: return new THREE.IcosahedronGeometry(2.5, 2);
+      case 1: return new THREE.TorusKnotGeometry(1.8, 0.5, detail * 2, detail);
+      case 2: return new THREE.SphereGeometry(2.2, detail, detail);
+      case 3: return new THREE.OctahedronGeometry(2.4, 2);
+      case 4: return new THREE.DodecahedronGeometry(2.3, 2);
+      case 5: return new THREE.TetrahedronGeometry(2.5, 2);
+      case 6: return new THREE.ConeGeometry(2.4, 4.2, 4); // Diamond / Pyramid Shell
+      case 7: return new THREE.CylinderGeometry(2.2, 2.2, 4.2, 6); // Hexagonal Prism Shell
+      case 8: return new THREE.TorusGeometry(2.2, 0.25, detail, detail * 2); // Tech Ring Shell
+      case 9: return new THREE.TorusKnotGeometry(2.2, 0.15, 256, 32, 3, 4); // Hyper Knot Shell
+      case 10: return new THREE.IcosahedronGeometry(2.4, 1); // Faceted Sphere Shell
+      case 11: return new THREE.OctahedronGeometry(2.4, 1); // Faceted Diamond Shell
+      default: return new THREE.IcosahedronGeometry(2.5, 2);
+    }
+  }, [detail, settings.shape]);
 
   useEffect(() => {
     applyPalette(solid.uniforms, settings.palette);
@@ -526,6 +643,8 @@ function Core({ settings }: SceneProps) {
 
   const group = useRef<THREE.Group>(null);
   const rot = useRef(new THREE.Vector3());
+  const rotVel = useRef(new THREE.Vector3());
+  const currentScale = useRef(1);
 
   useFrame(({ camera }, delta) => {
     const dt = Math.min(delta, 1 / 20);
@@ -536,24 +655,38 @@ function Core({ settings }: SceneProps) {
     wire.uniforms.uCamPos.value.copy(camera.position);
     solid.uniforms.uAmp.value = 0.5 + settings.intensity * 0.8;
     wire.uniforms.uAmp.value = 0.3;
+    solid.uniforms.uLiquid.value = settings.liquid ? 1 : 0;
+    wire.uniforms.uLiquid.value = settings.liquid ? 1 : 0;
 
-    // procedural rotation speeds driven by the mids
-    rot.current.x += dt * (0.06 + s.mid * 0.55);
-    rot.current.y += dt * (0.09 + s.mid * 0.85 + s.beat * 0.5);
-    rot.current.z += dt * (0.03 + s.high * 0.22);
+    // Organic rotational inertia: velocity acceleration & damping
+    const targetVelX = (0.05 + s.mid * 0.45) * settings.speed;
+    const targetVelY = (0.08 + s.mid * 0.65 + s.beat * 0.35) * settings.speed;
+    const targetVelZ = (0.025 + s.high * 0.20) * settings.speed;
+
+    rotVel.current.x = lerp(rotVel.current.x, targetVelX, 1 - Math.pow(0.005, dt));
+    rotVel.current.y = lerp(rotVel.current.y, targetVelY, 1 - Math.pow(0.005, dt));
+    rotVel.current.z = lerp(rotVel.current.z, targetVelZ, 1 - Math.pow(0.005, dt));
+
+    rot.current.x += dt * rotVel.current.x;
+    rot.current.y += dt * rotVel.current.y;
+    rot.current.z += dt * rotVel.current.z;
 
     if (group.current) {
       group.current.rotation.set(rot.current.x, rot.current.y, rot.current.z);
-      const pulse = 1 + s.sub * 0.42 + s.beat * 0.18;
-      group.current.scale.setScalar(pulse);
-      group.current.position.y = Math.sin(s.time * 0.5) * 0.12;
+      
+      const targetScale = (1 + s.sub * 0.38 + s.beat * 0.16) * settings.coreSize;
+      currentScale.current = lerp(currentScale.current, targetScale, 1 - Math.pow(0.0001, dt));
+      group.current.scale.setScalar(currentScale.current);
+      
+      const levitate = Math.sin(s.time * 0.6) * 0.10 + Math.sin(s.time * 1.4) * 0.03;
+      group.current.position.y = levitate;
     }
   });
 
   return (
     <group ref={group} position={[0, 0, -9]}>
       <mesh geometry={geometry} material={solid} renderOrder={1} />
-      <mesh geometry={shell} material={wire} renderOrder={5} />
+      {settings.wireframe && <mesh geometry={shell} material={wire} renderOrder={5} />}
     </group>
   );
 }
@@ -621,6 +754,55 @@ function StrobeRings({ settings }: SceneProps) {
 
 /* ============================================================= LASER FAN */
 
+
+function QuantumVortex({ settings }: SceneProps) {
+  const COUNT = settings.quality === "eco" ? 5000 : 18000;
+  
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    vertexShader: VORTEX_VERT,
+    fragmentShader: VORTEX_FRAG,
+    uniforms: makeAudioUniforms(),
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }), []);
+
+  const geometry = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(COUNT * 3);
+    const rand = new Float32Array(COUNT);
+    for(let i=0; i<COUNT; i++) {
+       const r = Math.random() * 8.0 + 0.5;
+       const theta = Math.random() * Math.PI * 2;
+       const y = (Math.random() - 0.5) * 4.0;
+       pos[i*3] = r * Math.cos(theta);
+       pos[i*3+1] = y;
+       pos[i*3+2] = r * Math.sin(theta);
+       rand[i] = Math.random();
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('aRand', new THREE.BufferAttribute(rand, 1));
+    return geo;
+  }, [COUNT]);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 1.2);
+  }, [material, settings.palette]);
+
+  useEffect(() => () => { geometry.dispose(); material.dispose(); }, [geometry, material]);
+
+  useFrame(({ clock, pointer }) => {
+    pushAudio(material.uniforms, clock.elapsedTime);
+    material.uniforms.uMouse.value.copy(pointer);
+    material.uniforms.uMagnetic.value = settings.magnetic ? 1.0 : 0.0;
+    material.uniforms.uParticleSize.value = settings.particleSize;
+  });
+
+  if (!settings.vortex) return null;
+
+  return <points geometry={geometry} material={material} />;
+}
+
 function LaserFan({ settings }: SceneProps) {
   const COUNT = settings.quality === "eco" ? 20 : 44;
   const RADIUS = 2.45;
@@ -684,9 +866,128 @@ function LaserFan({ settings }: SceneProps) {
     u.uLength.value = 14 + settings.intensity * 26 + audioState.beat * 12;
   });
 
-  if (!settings.strobes) return null;
+  if (!settings.laser) return null;
 
   return <primitive object={mesh} renderOrder={2} />;
+}
+
+
+
+/* ======================================================== ENERGY FLUX */
+
+function EnergyFlux({ settings }: SceneProps) {
+  const COUNT = settings.quality === "eco" ? 150 : 400;
+
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: FLUX_VERT,
+        fragmentShader: FLUX_FRAG,
+        uniforms: {
+          ...makeAudioUniforms(),
+          uFlux: { value: 1.0 },
+        },
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [],
+  );
+
+  const { geometry, mesh } = useMemo(() => {
+    const geo = new THREE.BoxGeometry(0.02, 0.02, 1);
+    geo.translate(0, 0, 0.5);
+    const rands = new Float32Array(COUNT * 3);
+    for (let i = 0; i < COUNT * 3; i++) rands[i] = Math.random();
+    geo.setAttribute("aRand", new THREE.InstancedBufferAttribute(rands, 3));
+
+    const im = new THREE.InstancedMesh(geo, material, COUNT);
+    im.frustumCulled = false;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const pos = new THREE.Vector3();
+    const scale = new THREE.Vector3(1, 1, 1);
+    for (let i = 0; i < COUNT; i++) {
+      // Random rotation over the entire sphere
+      const phi = Math.acos(2.0 * Math.random() - 1.0);
+      const theta = Math.random() * Math.PI * 2;
+      pos.setFromSphericalCoords(1.5, phi, theta);
+      // Orient the box to face outward
+      q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), pos.clone().normalize());
+      m.compose(pos, q, scale);
+      im.setMatrixAt(i, m);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    return { geometry: geo, mesh: im };
+  }, [COUNT, material]);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 2.5);
+  }, [material, settings.palette]);
+
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      mesh.dispose();
+    },
+    [geometry, mesh],
+  );
+
+  useFrame(() => {
+    pushAudio(material.uniforms, audioState.time);
+    material.uniforms.uFlux.value = settings.flux;
+  });
+
+  if (!settings.energyFlux) return null;
+
+  return <primitive object={mesh} renderOrder={3} />;
+}
+
+/* ======================================================== DATA RINGS */
+
+function DataRings({ settings }: SceneProps) {
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: DATARING_VERT,
+        fragmentShader: DATARING_FRAG,
+        uniforms: {
+          ...makeAudioUniforms(),
+        },
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+
+  const geometry = useMemo(() => new THREE.PlaneGeometry(12, 12), []);
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 1.5);
+  }, [material, settings.palette]);
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      material.dispose();
+    };
+  }, [geometry, material]);
+
+  useFrame(() => {
+    pushAudio(material.uniforms, audioState.time);
+    if (meshRef.current) {
+      meshRef.current.rotation.x = -Math.PI / 2;
+      meshRef.current.position.y = -2.2 + audioState.sub * 0.5;
+      meshRef.current.rotation.z = audioState.time * 0.1;
+    }
+  });
+
+  if (!settings.rings) return null;
+
+  return <mesh ref={meshRef} geometry={geometry} material={material} renderOrder={3} />;
 }
 
 /* ======================================================== SPECTRUM TOWERS */
@@ -835,6 +1136,13 @@ function CoreGlow({ settings }: SceneProps) {
 
   useFrame(({ clock, camera }) => {
     const t = clock.elapsedTime;
+    
+    const corePos = new THREE.Vector3(0, 0, 0);
+    corePos.project(camera);
+    if (halo.uniforms.uScreenPos) {
+      halo.uniforms.uScreenPos.value.set(corePos.x, corePos.y);
+    }
+    
     pushAudio(halo.uniforms, t);
     pushAudio(shock.uniforms, t);
 
@@ -876,53 +1184,69 @@ function CoreGlow({ settings }: SceneProps) {
 function CameraRig({ settings }: SceneProps) {
   const { camera } = useThree();
   const shake = useRef(0);
+  const dropPunch = useRef(0);
   const base = useMemo(() => new THREE.Vector3(0, 0, 0), []);
   const target = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => {
     const cam = camera as THREE.PerspectiveCamera;
-    cam.fov = 74;
+    cam.fov = settings.fov ?? 74;
     cam.near = 0.05;
     cam.far = 220;
     cam.position.copy(base);
     cam.updateProjectionMatrix();
-  }, [camera, base]);
+  }, [camera, base, settings.fov]);
 
   useFrame(({ clock }, delta) => {
     const dt = Math.min(delta, 1 / 20);
     const s = audioState;
     const t = clock.elapsedTime;
 
-    // transient-driven camera shake (sub-bass + beat impulse)
-    shake.current = Math.max(shake.current * Math.pow(0.0025, dt), s.sub * s.sub * 1.6 + s.beat * 0.55);
-    // hard-clamped so the camera can never leave the raymarched volume
-    const amp = Math.min(shake.current * 0.34, 0.32) * (0.35 + settings.intensity * 0.45);
+    // Detect massive RMS drop / transients (sub bass spike + beat impulse)
+    const isDrop = (s.level > 0.70 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
+    if (isDrop) {
+      dropPunch.current = Math.max(dropPunch.current, 22.0 * settings.intensity);
+    }
+    dropPunch.current = lerp(dropPunch.current, 0, 1 - Math.pow(0.003, dt));
 
-    const drift = 0.18 + s.mid * 0.28;
+    // transient-driven camera shake (sub-bass + beat impulse) with smooth exponential decay
+    shake.current = Math.max(shake.current * Math.pow(0.002, dt), (s.sub * s.sub * 1.3 + s.beat * 0.45) * settings.shake);
+    const amp = Math.min(shake.current * 0.28, 0.28) * (0.35 + settings.intensity * 0.45);
+
+    // Smooth organic 3D drift (Lissajous path + sub-bass room recoil)
+    const drift = 0.16 + s.mid * 0.24;
     target.set(
-      base.x + Math.sin(t * 0.37) * drift + Math.sin(t * 23.1) * amp,
-      base.y + Math.cos(t * 0.29) * drift * 0.6 + Math.sin(t * 27.7) * amp,
-      base.z,
+      base.x + Math.sin(t * 0.31) * drift + Math.cos(t * 0.67) * 0.05,
+      base.y + Math.cos(t * 0.23) * drift * 0.7 + Math.sin(t * 0.53) * 0.04,
+      base.z - (s.sub * 0.18), // smooth sub-bass recoil for physical room feeling
     );
-    camera.position.lerp(target, 1 - Math.pow(0.0001, dt));
 
-    // roll: slow industrial sway + snappy hit rotation
-    const roll =
-      Math.sin(t * 0.23) * 0.06 +
-      Math.sin(t * 0.11) * 0.03 +
-      s.beat * 0.035 * Math.sin(t * 41.0) +
-      s.high * 0.012 * Math.sin(t * 61.0);
-    camera.rotation.z = roll;
-    camera.rotation.x = Math.sin(t * 0.19) * 0.045 + s.beat * 0.02;
-    camera.rotation.y = Math.sin(t * 0.157) * 0.05;
+    // Damped interpolation for butter-smooth camera position tracking
+    camera.position.lerp(target, 1 - Math.pow(0.00001, dt));
+
+    // Damped micro-impact shake offset
+    if (amp > 0.001) {
+      camera.position.x += (Math.sin(t * 31.3) + Math.sin(t * 57.1)) * 0.5 * amp;
+      camera.position.y += (Math.cos(t * 37.7) + Math.cos(t * 43.3)) * 0.5 * amp;
+    }
+
+    // Smooth physics-damped camera rotational sway
+    const roll = Math.sin(t * 0.19) * 0.045 + Math.sin(t * 0.09) * 0.02 + s.beat * 0.02 * Math.sin(t * 29.0);
+    const pitch = Math.sin(t * 0.15) * 0.035 + s.beat * 0.015;
+    const yaw = Math.sin(t * 0.12) * 0.04;
+    
+    camera.rotation.z = lerp(camera.rotation.z, roll, 1 - Math.pow(0.0005, dt));
+    camera.rotation.x = lerp(camera.rotation.x, pitch, 1 - Math.pow(0.0005, dt));
+    camera.rotation.y = lerp(camera.rotation.y, yaw, 1 - Math.pow(0.0005, dt));
+
     // publish the new matrix immediately so the raymarched tunnel (which reads
     // matrixWorld) stays perfectly in sync with the mesh layers.
     camera.updateMatrixWorld();
 
     const cam = camera as THREE.PerspectiveCamera;
-    const fov = 72 + s.sub * 6 + s.beat * 3.5;
-    if (Math.abs(cam.fov - fov) > 0.01) {
-      cam.fov = lerp(cam.fov, fov, 1 - Math.pow(0.001, dt));
+    const targetFov = (settings.fov ?? 74) + s.sub * 5.0 + s.beat * 3.0 + dropPunch.current;
+    if (Math.abs(cam.fov - targetFov) > 0.01) {
+      cam.fov = lerp(cam.fov, targetFov, 1 - Math.pow(0.0001, dt));
       cam.updateProjectionMatrix();
     }
   });
@@ -949,8 +1273,10 @@ function Effects({ settings }: SceneProps) {
   const vignette = useRef<VignetteEffect>(null);
   const glitch = useRef<GlitchEffect>(null);
   const scan = useRef<ScanlineEffect>(null);
+  const gamma = useRef<any>(null);
 
   const glitchLeft = useRef(0);
+  const dropBloomFlash = useRef(1.0);
   const strengthVec = useMemo(() => new THREE.Vector2(), []);
 
   // recovery: step the composer down, unfreeze the loop, keep the music playing
@@ -978,24 +1304,60 @@ function Effects({ settings }: SceneProps) {
     const s = audioState;
     if (tier > 0) return;
 
+    // Detect massive RMS drop / transients (sub bass spike + beat impulse)
+    const isDrop = (s.level > 0.70 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
+    if (isDrop) {
+      dropBloomFlash.current = 3.0;
+    }
+    dropBloomFlash.current = lerp(dropBloomFlash.current, 1.0, 1 - Math.pow(0.006, dt));
+
     const b = bloom.current;
     if (b) {
-      b.intensity = (0.45 + settings.bloom * 1.35) * (0.65 + s.high * 1.5 + s.beat * 0.9);
-      b.luminanceMaterial.threshold = 0.09 + s.level * 0.06;
-      b.luminanceMaterial.smoothing = 0.26 + s.level * 0.1;
+      let bIntensity, bThreshold, bSmoothing, bRadius;
+      const userThresh = settings.bloomThreshold ?? 0.15;
+      
+      if (settings.bloomProfile === "laser") {
+        bIntensity = (0.8 + settings.bloom * 2.5) * (1.0 + s.high * 2.5 + s.beat * 1.5);
+        bThreshold = Math.min(1.0, userThresh * 0.8 + 0.35 + s.level * 0.05);
+        bSmoothing = 0.02;
+        bRadius = 0.15;
+      } else if (settings.bloomProfile === "hard") {
+        bIntensity = (0.6 + settings.bloom * 1.8) * (0.8 + s.high * 2.0 + s.beat * 1.2);
+        bThreshold = Math.min(1.0, userThresh * 0.8 + 0.2 + s.level * 0.1);
+        bSmoothing = 0.1;
+        bRadius = 0.4;
+      } else {
+        // Soft (default)
+        bIntensity = (0.45 + settings.bloom * 1.35) * (0.65 + s.high * 1.5 + s.beat * 0.9);
+        bThreshold = Math.min(1.0, userThresh * 0.8 + 0.02 + s.level * 0.06);
+        bSmoothing = 0.26 + s.level * 0.1;
+        bRadius = 0.72 + s.sub * 0.24;
+      }
+      
+      b.intensity = bIntensity * dropBloomFlash.current;
+      b.luminanceMaterial.threshold = bThreshold;
+      b.luminanceMaterial.smoothing = bSmoothing;
       const rad = b as unknown as { radius?: number };
-      if (typeof rad.radius === "number") rad.radius = 0.72 + s.sub * 0.24;
+      if (typeof rad.radius === "number") rad.radius = bRadius;
+    }
+
+    const gm = gamma.current;
+    if (gm && gm.uniforms) {
+      const uG = gm.uniforms.get("uGamma");
+      if (uG) uG.value = settings.gamma ?? 1.0;
     }
 
     const c = chroma.current;
     if (c) {
-      const amt = 0.00045 + s.high * 0.0042 + s.beat * 0.0026 * settings.intensity;
+      const glitchMul = 1.0 + (settings.crystallineGlitch ?? 0) * 3.5;
+      const crystalJitter = (settings.crystallineGlitch ?? 0) * 0.004 * (1.0 + s.high * 2.0);
+      const amt = (0.00045 + s.high * 0.0042 + s.beat * 0.0026 * settings.intensity) * glitchMul + crystalJitter;
       (c.offset as THREE.Vector2).set(amt, amt * 0.82);
     }
 
     const n = noise.current;
     if (n) {
-      n.blendMode.opacity.value = 0.035 + s.level * 0.05 + s.beat * 0.03;
+      n.blendMode.opacity.value = (0.035 + s.level * 0.05 + s.beat * 0.03) * settings.noiseLevel;
     }
 
     const sc = scan.current;
@@ -1048,6 +1410,11 @@ function Effects({ settings }: SceneProps) {
       mipmapBlur
       radius={0.8}
     />,
+    <CustomGamma
+      key="gamma"
+      ref={(r: any) => { gamma.current = r as any; }}
+      gamma={settings.gamma}
+    />,
   ];
 
   if (tier <= 1) {
@@ -1080,9 +1447,114 @@ function Effects({ settings }: SceneProps) {
   nodes.push(<Vignette key="vignette" ref={(r: any) => { vignette.current = r as any; }} eskil={false} offset={0.26} darkness={0.78} />);
 
   return (
-    <EffectComposer key={tier} multisampling={0} enableNormalPass={false}>
+    <EffectComposer key={tier} multisampling={0} enableNormalPass={false} autoClear={false}>
       {nodes}
     </EffectComposer>
+  );
+}
+
+/* ========================================================= MOTION BLUR FADE & BACKDROP */
+function FadePlane({ settings }: SceneProps) {
+  const { camera } = useThree();
+  const meshRef = useRef<THREE.Mesh>(null);
+  
+  const material = useMemo(() => {
+    const u = makeAudioUniforms();
+    return new THREE.ShaderMaterial({
+      vertexShader: BACKDROP_VERT,
+      fragmentShader: BACKDROP_FRAG,
+      uniforms: { ...u, uOpacity: { value: 1.0 } },
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+  }, []);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 1.0);
+  }, [material, settings.palette]);
+
+  useFrame(({ clock }) => {
+    pushAudio(material.uniforms, clock.elapsedTime);
+    material.uniforms.uOpacity.value = 1.0 - settings.trails;
+    material.uniforms.uStrobeMode.value = settings.strobeMode ? 1.0 : 0.0;
+    material.uniforms.uStrobeSpeed.value = settings.strobeSpeed;
+  });
+
+  return createPortal(
+    <mesh ref={meshRef} position={[0, 0, -5]} renderOrder={-99999}>
+      <planeGeometry args={[100, 100]} />
+      <primitive object={material} attach="material" />
+    </mesh>,
+    camera
+  );
+}
+
+
+function CyberGrid({ settings }: SceneProps) {
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    vertexShader: GRID_VERT,
+    fragmentShader: GRID_FRAG,
+    uniforms: makeAudioUniforms(),
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide
+  }), []);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 1.0);
+  }, [material, settings.palette]);
+
+  useFrame(({ clock }) => {
+    pushAudio(material.uniforms, clock.elapsedTime);
+  });
+
+  if (!settings.grid) return null;
+
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2, 0]}>
+      <planeGeometry args={[100, 100, 32, 32]} />
+      <primitive object={material} attach="material" />
+    </mesh>
+  );
+}
+
+
+function GodRays({ settings }: SceneProps) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  
+  const material = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      vertexShader: RAY_VERT,
+      fragmentShader: RAY_FRAG,
+      uniforms: makeAudioUniforms(),
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide
+    });
+  }, []);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 1.2);
+  }, [material, settings.palette]);
+
+  useFrame(({ clock }) => {
+    pushAudio(material.uniforms, clock.elapsedTime);
+    if (meshRef.current) {
+      meshRef.current.rotation.y = clock.elapsedTime * 0.2;
+      meshRef.current.rotation.z = clock.elapsedTime * 0.1;
+    }
+  });
+
+  if (!settings.rays) return null;
+
+  return (
+    <mesh ref={meshRef} position={[0, 0, 0]}>
+      <cylinderGeometry args={[2.5, 12.0, 30.0, 64, 1, true]} />
+      <primitive object={material} attach="material" />
+    </mesh>
   );
 }
 
@@ -1093,7 +1565,8 @@ export default function Scene({ settings }: SceneProps) {
   const props = useMemo(() => ({ settings }), [settings]);
 
   useEffect(() => {
-    gl.setClearColor(new THREE.Color("#030305"), 1);
+    gl.setClearColor(new THREE.Color("#000000"), 1);
+    gl.autoClear = false;
     gl.toneMapping = THREE.NoToneMapping;
 
     // expose the WebGL surface + a React-free resolution dial
@@ -1135,18 +1608,329 @@ export default function Scene({ settings }: SceneProps) {
 
   return (
     <>
-      <AudioDriver />
+      <AudioDriver {...props} />
       <PerfProbe {...props} />
       <Governor {...props} />
+      <FadePlane {...props} />
       <CameraRig {...props} />
       <Tunnel {...props} />
       <Core {...props} />
+      <Obelisks {...props} />
       <CoreGlow {...props} />
-      <LaserFan {...props} />
+      <EnergyFlux {...props} />
+      <QuantumVortex {...props} />
+      {settings.laser && <LaserFan {...props} />}
+      <DataRings {...props} />
       <StrobeRings {...props} />
+      <CyberGrid {...props} />
+      <GodRays {...props} />
       <SpectrumTowers {...props} />
       <ParticleField {...props} />
+      <QuantumPortal {...props} />
+      <NeuralSynapses {...props} />
       <Effects {...props} />
     </>
   );
+}
+
+/* ========================================================== QUANTUM PORTAL */
+
+function QuantumPortal({ settings }: SceneProps) {
+  const COUNT = settings.quality === "eco" ? 5 : settings.quality === "balanced" ? 7 : 9;
+  const imRef = useRef<THREE.InstancedMesh>(null);
+  const rotAngles = useRef<Float32Array>(new Float32Array(COUNT * 3));
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: PORTAL_VERT,
+        fragmentShader: PORTAL_FRAG,
+        uniforms: {
+          ...makeAudioUniforms(),
+          uCamPos: { value: new THREE.Vector3() },
+        },
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
+
+  const geometry = useMemo(() => new THREE.TorusGeometry(3.2, 0.08, 20, 80), []);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 1.2);
+  }, [settings.palette, material]);
+
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material],
+  );
+
+  useFrame(({ camera }, delta) => {
+    const dt = Math.min(delta, 1 / 20);
+    const im = imRef.current;
+    if (!im) return;
+
+    pushAudio(material.uniforms, audioState.time);
+    material.uniforms.uCamPos.value.copy(camera.position);
+
+    const s = audioState;
+    const angles = rotAngles.current;
+    // Bind angular rotation velocity to the Highs frequency band
+    const highSpd = (0.4 + s.high * 4.5 + s.beat * 2.0) * settings.speed;
+
+    for (let i = 0; i < COUNT; i++) {
+      const dir = i % 2 === 0 ? 1 : -1;
+      const speedMult = (0.45 + i * 0.2) * dir;
+
+      angles[i * 3] += dt * speedMult * highSpd;
+      angles[i * 3 + 1] += dt * speedMult * 0.7 * highSpd;
+      angles[i * 3 + 2] += dt * speedMult * 0.5 * highSpd;
+
+      dummy.position.set(0, 0, 0);
+      dummy.rotation.set(
+        angles[i * 3] + i * 0.42,
+        angles[i * 3 + 1] + i * 0.31,
+        angles[i * 3 + 2] + i * 0.53,
+      );
+
+      const scale = (0.7 + i * 0.25) * (1.0 + s.sub * 0.16);
+      dummy.scale.set(scale, scale, scale);
+      dummy.updateMatrix();
+
+      im.setMatrixAt(i, dummy.matrix);
+    }
+
+    im.instanceMatrix.needsUpdate = true;
+  });
+
+  if (!settings.quantumPortal) return null;
+
+  return <instancedMesh ref={imRef} args={[geometry, material, COUNT]} frustumCulled={false} renderOrder={4} />;
+}
+
+/* ========================================================== NEURAL SYNAPSES */
+
+function NeuralSynapses({ settings }: SceneProps) {
+  const MAX_SYNAPSES = settings.quality === "eco" ? 24 : 48;
+  const lineRef = useRef<THREE.LineSegments>(null);
+
+  // Each synapse has 2 vertices (origin and tip) = 6 floats in buffer
+  const positions = useMemo(() => new Float32Array(MAX_SYNAPSES * 6), [MAX_SYNAPSES]);
+  const velocities = useRef<Float32Array>(new Float32Array(MAX_SYNAPSES * 3));
+  const lifespans = useRef<Float32Array>(new Float32Array(MAX_SYNAPSES));
+  const maxLifespans = useRef<Float32Array>(new Float32Array(MAX_SYNAPSES));
+  const cooldown = useRef(0);
+
+  const material = useMemo(
+    () =>
+      new THREE.LineBasicMaterial({
+        color: new THREE.Color(PALETTES[0].hex[2]),
+        transparent: true,
+        opacity: 0.75,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [],
+  );
+
+  const geometry = useMemo(() => {
+    const geo = new THREE.BufferGeometry();
+    const posAttr = new THREE.BufferAttribute(positions, 3);
+    geo.setAttribute("position", posAttr);
+    return geo;
+  }, [positions]);
+
+  useEffect(() => {
+    const col = new THREE.Color(PALETTES[settings.palette % PALETTES.length].hex[2]);
+    material.color.copy(col);
+  }, [settings.palette, material]);
+
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material],
+  );
+
+  useFrame((_, delta) => {
+    const dt = Math.min(delta, 1 / 20);
+    const s = audioState;
+    const vels = velocities.current;
+    const lives = lifespans.current;
+    const maxLives = maxLifespans.current;
+    const posArr = positions;
+
+    cooldown.current -= dt;
+
+    // Trigger on bass peak threshold strictly
+    const isBassPeak = s.bass > 0.58 && (s.beat > 0.45 || s.sub > 0.65);
+    if (isBassPeak && cooldown.current <= 0) {
+      cooldown.current = 0.06;
+      // Spawn burst of 2-4 synapses
+      const spawnCount = 2 + Math.floor(Math.random() * 3);
+      let spawned = 0;
+
+      for (let i = 0; i < MAX_SYNAPSES && spawned < spawnCount; i++) {
+        if (lives[i] <= 0) {
+          const duration = 0.25 + Math.random() * 0.35;
+          lives[i] = duration;
+          maxLives[i] = duration;
+
+          const theta = Math.random() * Math.PI * 2;
+          const phi = (Math.random() - 0.5) * Math.PI;
+          const speed = (10.0 + Math.random() * 18.0 + s.bass * 14.0) * settings.speed;
+
+          vels[i * 3] = Math.cos(theta) * Math.cos(phi) * speed;
+          vels[i * 3 + 1] = Math.sin(phi) * speed;
+          vels[i * 3 + 2] = Math.sin(theta) * Math.cos(phi) * speed;
+
+          const startRadius = 0.4 + s.sub * 0.4;
+          const sx = Math.cos(theta) * Math.cos(phi) * startRadius;
+          const sy = Math.sin(phi) * startRadius;
+          const sz = Math.sin(theta) * Math.cos(phi) * startRadius;
+
+          const baseIdx = i * 6;
+          posArr[baseIdx] = sx;
+          posArr[baseIdx + 1] = sy;
+          posArr[baseIdx + 2] = sz;
+          posArr[baseIdx + 3] = sx;
+          posArr[baseIdx + 4] = sy;
+          posArr[baseIdx + 5] = sz;
+
+          spawned++;
+        }
+      }
+    }
+
+    let needsUpdate = false;
+
+    // Advance existing synapses outward
+    for (let i = 0; i < MAX_SYNAPSES; i++) {
+      if (lives[i] > 0) {
+        lives[i] -= dt;
+        const progress = 1.0 - Math.max(0, lives[i] / maxLives[i]);
+        const baseIdx = i * 6;
+
+        // Tip travels outward along velocity
+        posArr[baseIdx + 3] += vels[i * 3] * dt;
+        posArr[baseIdx + 4] += vels[i * 3 + 1] * dt;
+        posArr[baseIdx + 5] += vels[i * 3 + 2] * dt;
+
+        // Tail catches up smoothly
+        if (progress > 0.3) {
+          posArr[baseIdx] += vels[i * 3] * dt * 0.8;
+          posArr[baseIdx + 1] += vels[i * 3 + 1] * dt * 0.8;
+          posArr[baseIdx + 2] += vels[i * 3 + 2] * dt * 0.8;
+        }
+
+        needsUpdate = true;
+
+        if (lives[i] <= 0) {
+          // Collapse segment
+          posArr[baseIdx] = 0;
+          posArr[baseIdx + 1] = 0;
+          posArr[baseIdx + 2] = 0;
+          posArr[baseIdx + 3] = 0;
+          posArr[baseIdx + 4] = 0;
+          posArr[baseIdx + 5] = 0;
+        }
+      }
+    }
+
+    if (needsUpdate && geometry.attributes.position) {
+      (geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    }
+
+    material.opacity = 0.4 + s.bass * 0.5 + s.beat * 0.3;
+  });
+
+  if (!settings.neuralSynapses) return null;
+
+  return <lineSegments ref={lineRef} geometry={geometry} material={material} frustumCulled={false} renderOrder={5} />;
+}
+
+/* ========================================================== OBELISKS */
+
+function Obelisks({ settings }: SceneProps) {
+  const COUNT = settings.quality === "eco" ? 12 : 36;
+  
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: CORE_VERT,
+        fragmentShader: CORE_FRAG,
+        uniforms: {
+          ...makeAudioUniforms(),
+          uCamPos: { value: new THREE.Vector3() },
+          uAmp: { value: 0.1 },
+          uWire: { value: 0 },
+          uLiquid: { value: 0 },
+        },
+      }),
+    [],
+  );
+
+  const { geometry, mesh } = useMemo(() => {
+    // A tall, sharp obelisk/shard
+    const geo = new THREE.CylinderGeometry(0.01, 0.25, 4.0, 4);
+    const im = new THREE.InstancedMesh(geo, material, COUNT);
+    im.frustumCulled = false;
+    
+    const m = new THREE.Matrix4();
+    const pos = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const scale = new THREE.Vector3(1, 1, 1);
+    
+    for (let i = 0; i < COUNT; i++) {
+      const angle = (i / COUNT) * Math.PI * 2;
+      const radius = 5.5 + (i % 3) * 1.5; // Staggered rings
+      pos.set(Math.cos(angle) * radius, (Math.random() - 0.5) * 4.0, Math.sin(angle) * radius);
+      
+      // Point them generally towards the center or randomly tilted
+      q.setFromEuler(new THREE.Euler(Math.random() * 0.4 - 0.2, -angle, Math.random() * 0.4 - 0.2));
+      m.compose(pos, q, scale);
+      im.setMatrixAt(i, m);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    return { geometry: geo, mesh: im };
+  }, [COUNT, material]);
+
+  useEffect(() => {
+    applyPalette(material.uniforms, settings.palette, 0.8);
+  }, [material, settings.palette]);
+
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      mesh.dispose();
+    },
+    [geometry, mesh],
+  );
+
+  const rot = useRef(0);
+
+  useFrame(({ camera }, delta) => {
+    const dt = Math.min(delta, 1 / 20);
+    pushAudio(material.uniforms, audioState.time);
+    material.uniforms.uCamPos.value.copy(camera.position);
+    
+    rot.current += dt * (0.05 + audioState.mid * 0.2) * settings.speed;
+    mesh.rotation.y = rot.current;
+    
+    // Pulse scale with bass
+    const pulse = 1.0 + audioState.sub * 0.3;
+    mesh.scale.set(pulse, pulse, pulse);
+  });
+
+  if (!settings.obelisks) return null;
+
+  return <primitive object={mesh} renderOrder={4} />;
 }

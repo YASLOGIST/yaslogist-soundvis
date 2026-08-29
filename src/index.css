@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@theme {
+  --animate-breathe: breathe 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.015); }
+  }
+}
+
+
 /* ==========================================================================
    VOID // REACTOR — industrial techno visualizer
    ========================================================================== */
@@ -11,7 +20,9 @@
   --muted: #6d7a84;
   --void: #050505;
   --line: rgba(255, 255, 255, 0.09);
-  --panel: rgba(8, 9, 11, 0.72);
+  --ui-opacity: 0.72;
+  --ui-blur: 14px;
+  --panel: rgba(8, 9, 11, var(--ui-opacity));
 }
 
 * {
@@ -54,10 +65,10 @@ canvas {
 }
 
 .panel {
-  background: var(--panel);
+  background: rgba(8, 9, 11, var(--ui-opacity));
   border: 1px solid var(--line);
-  backdrop-filter: blur(14px) saturate(140%);
-  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(var(--ui-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--ui-blur)) saturate(140%);
   box-shadow:
     0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
     0 18px 50px -24px rgba(0, 0, 0, 0.9);
@@ -256,4 +267,23 @@ input[type="range"]::-moz-range-thumb {
 }
 .no-scrollbar {
   scrollbar-width: none;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.25);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 240, 255, 0.5);
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 240, 255, 0.25) rgba(0, 0, 0, 0.2);
 }

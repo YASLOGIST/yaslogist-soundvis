@@ -1,136 +1,161 @@
-# VOID // REACTOR
+# YASLOGIST SOUNDVIS - Audio-Reactive VJ Engine
 
-An ultra-high-performance, standalone **audio-reactive 3D visualizer** engineered for
-industrial / melodic techno. Raymarched SDF tunnel, a 160 000-point simplex-noise cloud,
-real-time FFT band isolation and a transient-locked post-processing pipeline.
+![YASLOGIST SOUNDVIS Preview](./yaslogist-soundvis-preview.png)
 
-Everything is synthesised and rendered **locally** — no assets, no network, no tracking.
+> **YASLOGIST SOUNDVIS** is an ultra-high-performance, standalone, hardware-accelerated **audio-reactive 3D visualizer and live VJ performance engine** engineered for industrial, acid, and melodic techno. Built with cutting-edge WebGL2, Three.js, React Three Fiber, custom GLSL shaders, and real-time Web Audio API signal processing.
 
 ---
 
-## Install & run
+## ⚡ Overview & First Principles
+
+YASLOGIST SOUNDVIS is architected for zero-latency, stutter-free 60+ FPS performance during live electronic music performances, stage projections, and VJ sets. 
+
+Everything is computed and rendered **100% client-side** in real-time — with **zero external assets, zero network calls, zero tracking, and zero GC pressure**.
+
+```
+                           ┌────────────────────────────────────────┐
+                           │          Audio Input Source            │
+                           │  (Internal Synth / Mic / Sys / File)   │
+                           └───────────────────┬────────────────────┘
+                                               │
+                                               ▼
+                           ┌────────────────────────────────────────┐
+                           │      Web Audio API Signal Graph        │
+                           │  FFT 1024 · 4-Band Splitting · RMS     │
+                           └───────────────────┬────────────────────┘
+                                               │
+                         ┌─────────────────────┴─────────────────────┐
+                         │                                           │
+                         ▼                                           ▼
+             ┌────────────────────────┐                 ┌─────────────────────────┐
+             │ Global Mutable State   │                 │ Direct DOM HUD Bridge   │
+             │ (audioState - No React)│                 │ (hudBridge - 0 Re-render│
+             └───────────┬────────────┘                 └─────────────────────────┘
+                         │
+                         ▼
+             ┌────────────────────────┐
+             │ R3F Frame Loop (GPU)   │
+             │ 3D SDF / GLSL Shaders  │
+             └────────────────────────┘
+```
+
+---
+
+## 🏛️ System Architecture
+
+* **React 19 & React Three Fiber (R3F)**: Declarative scene hierarchy with strictly decoupled animation loops.
+* **Three.js (r180)**: Native WebGL2 rendering pipeline with instanced meshes, custom shader materials, and dynamic buffer geometries.
+* **Custom GLSL 3.0 Shaders**: Ashima 3D Simplex noise, FBM, raymarched signed distance field (SDF) infinite tunnels, and cosmic plasma fragment routines.
+* **Zero React Loop Overhead**: The audio engine writes directly to typed numeric arrays in `audioState`; `useFrame` pipes values directly to `ShaderMaterial.uniforms` and GPU instance matrices.
+* **Post-Processing Pipeline**: Multi-stage `postprocessing` effect composer featuring Bloom, Chromatic Aberration, Vignette, Film Grain, Scanlines, and Hardware-Protected Auto-Recovery fallback tiers.
+
+---
+
+## 🌟 Core Features & Hyper-Dimensional FX
+
+### 1. 🎛️ Glassmorphism HUD Control Dock
+* **Collapsible Floating Dock**: Sleek cyberpunk aesthetic with strict Tailwind CSS glassmorphism (`backdrop-blur-2xl`, subtle cyan glow, custom thin scrollbar).
+* **Zen Mode (`👁 ZEN`)**: Complete UI collapse into a minimal trigger badge, leaving the viewport **100% clean and unobstructed** for live stage visual projections.
+* **Live Analysis Console**: Real-time 64-bin FFT spectrum analyzer, time-domain oscilloscope, and transient sub/bass/mid/high VU meters.
+
+### 2. 🌀 Quantum Portal (Custom GLSL Plasma)
+* Multi-ring instanced torus geometry that counter-rotates dynamically.
+* Angular rotation speed is locked to the **Highs** frequency band ($5\text{ kHz} - 16\text{ kHz}$), accelerating violently on hi-hat and cymbal strikes.
+* Driven by a custom GLSL fragment shader simulating harmonic cosmic plasma flow and luminescent Fresnel rim edge glow.
+
+### 3. ⚡ Neural Synapses
+* Radial filament burst system built with `THREE.LineSegments`.
+* Strictly triggered upon **Bass & Sub** transient peak thresholds ($>0.58$), shooting randomized high-velocity energy paths outward from the singularity core.
+
+### 4. 💥 The "Drop" Impact Dynamics
+* Real-time broadband RMS and sub-bass surge detector.
+* When a massive drop or heavy transient hits:
+  * **Camera FOV Punch**: Instantly explodes the perspective field of view outward ($+22^\circ$) and spring-damps back into groove.
+  * **3x Bloom Flare**: Supercharges global luminescent bloom by $300\%$ for an explosive visual flash.
+
+### 5. 💎 Crystalline Glitch
+* Global chromatic aberration pass with prismatic RGB dispersion, high-frequency audio flutter, and interactive intensity control.
+
+### 6. ⏱️ Master Clock Synchronization
+* Synchronizes visual animation phases, particle orbits, and synth patterns to a central BPM phase ($0.0 \dots 1.0$) for razor-sharp temporal alignment.
+
+### 7. 🎨 20 Curated Color Palettes & 12 Base Geometries
+* Includes *Laser Cyan*, *Acid Neon*, *Ultraviolet*, *Glitch White*, *Infrared*, *Toxic Magenta*, *Solar Gold*, *Biohazard*, *Matrix Code*, *Liquid Gold*, *Void Matter*, and more.
+* 12 morphable geometric shapes including Icosahedrons, Torus Knots, Octahedrons, Hyper-Cubes, and Liquid Metal vertex displacement.
+
+### 8. 🎹 Built-In Procedural 132 BPM Acid Techno Synthesizer
+* Dual-oscillator pitched sub-bass kick drum, 303 resonant acid bassline, industrial 909-style closed/open hats, and analog noise sweep generator.
+* Live Tap-BPM tempo calculator and frequency profile EQ curve selector (*Smooth*, *Standard*, *Dynamic*, *Hyper*).
+
+---
+
+## 📸 Snapshot & Promo Capture Utility
+
+* **`[CAPTURE SNAPSHOT]`**: Located prominently at the base of the Glassmorphism dock. Reads the active WebGL framebuffer (`preserveDrawingBuffer: true`) and downloads `yaslogist-soundvis-preview.png` in pristine full-resolution lossless PNG.
+* **60 FPS Video Recorder**: Built-in MediaRecorder engine muxes real-time WebGL video with the source audio stream into `.webm` / `.mp4` performance clips.
+
+---
+
+## 🚀 Setup & Installation
+
+### Prerequisites
+* **Node.js**: v18.0.0 or higher
+* **npm** or **pnpm** / **yarn**
+
+### Quickstart
 
 ```bash
-npm install          # three, @react-three/fiber, @react-three/postprocessing, postprocessing
-npm run dev          # http://localhost:5173
-npm run build        # single-file production bundle → dist/index.html
-npm run preview      # serve the production bundle
+# 1. Clone or navigate to the repository
+cd SOUNDVIS
+
+# 2. Install dependencies
+npm install
+
+# 3. Start development server (with Vite HMR)
+npm run dev
+
+# 4. Open in your browser
+# => http://localhost:5173
 ```
 
-> The production build is inlined into **one self-contained `dist/index.html`** by
-> `vite-plugin-singlefile` — drop it on any static host or open it from disk.
+### Production Build
+
+```bash
+# Type-check and compile single-file distribution bundle
+npm run build
+
+# Preview production build locally
+npm run preview
+```
+
+> The production build compiles into a **single self-contained `dist/index.html`** file via `vite-plugin-singlefile`. It can be run locally off-grid or deployed instantly to Cloudflare Pages, Vercel, Netlify, or GitHub Pages.
 
 ---
 
-## Architecture
+## ⌨️ Keyboard Shortcuts & Hotkeys
 
-```
-src/
-├─ audio/
-│  ├─ AudioEngine.ts    Web Audio graph: dual input, FFT 1024, band isolation,
-│  │                    adaptive normalisation, transient/beat detection, BPM lock
-│  ├─ DemoSynth.ts      Procedural 132 BPM peak-time techno generator
-│  │                    (pitched-sub kick, 303 acid line, industrial hats, dub stabs)
-│  └─ state.ts          Mutable, React-free frame state + palettes + quality presets
-├─ three/
-│  ├─ Scene.tsx         Layer components, camera rig, adaptive governor, post FX
-│  └─ shaders.ts        All GLSL: simplex noise, SDF raymarcher, particle morph,
-│                       procedural metal shading, strobe + laser instancing
-├─ media/Recorder.ts    MediaRecorder capture (canvas video + Web Audio muxed)
-├─ ui/
-│  ├─ Hud.tsx           Floating console — zero re-renders in the animation loop
-│  └─ ErrorBoundary.tsx Render-pipeline fault isolation
-└─ App.tsx              Shell: boot gate, capture, presets, drag & drop, shortcuts
-```
-
-### Data flow (why it never stutters)
-
-```
-AnalyserNode ──▶ AudioEngine.update()  ──▶ audioState (plain mutable object)
-                                               │
-              useFrame (once per frame) ───────┘
-                                               ▼
-                      shader uniforms + DOM style writes
-```
-
-* **Zero React state inside the animation loop.** The analyser writes into a module-level
-  `audioState` object; `useFrame` copies those values straight into `ShaderMaterial.uniforms`.
-* HUD meters, the spectrum, the oscilloscope, the FPS/BPM readouts and the beat lamp are
-  written **directly to DOM nodes** through `hudBridge` — no reconciliation, no GC pressure.
-* All GPU buffers are pre-allocated once; nothing is created per frame except a handful of
-  reusable `Vector2`/`Matrix3` scratch objects.
+| Key | Action |
+| :--- | :--- |
+| <kbd>SPACE</kbd> | Toggle Play / Pause Audio Source |
+| <kbd>H</kbd> | Toggle HUD Interface Visibility |
+| <kbd>Z</kbd> | Toggle Zen Performance Mode |
+| <kbd>F</kbd> | Toggle Fullscreen Mode |
+| <kbd>P</kbd> | Capture Instant PNG Snapshot (`yaslogist-soundvis-preview.png`) |
+| <kbd>R</kbd> | Start / Stop 60 FPS Video Recording |
+| <kbd>1</kbd> – <kbd>9</kbd> | Quick-Select Preset Palettes |
+| <kbd>?</kbd> | Open Shortcuts & System Diagnostics Sheet |
 
 ---
 
-## Audio analysis
+## ⚙️ Hardware Optimization
 
-| Band | Range | Drives |
-|------|-------|--------|
-| Sub / kick | 20 – 120 Hz | tunnel radius pulse, camera shake, radial shockwave, glitch bursts |
-| Bass | 120 – 400 Hz | monolith scale, shell brightness, cone sheen |
-| Mids / synths | 400 – 2500 Hz | noise displacement, mesh morph, vortex + rotation speed |
-| Highs / tops | 5 – 16 kHz | bloom spikes, chromatic aberration, particle velocity, sparkle |
+Optimized for **Apple Silicon (M1/M2/M3/M4, Metal)** and modern dedicated GPUs (NVIDIA RTX / AMD Radeon):
+* Adaptive performance governor automatically balances render resolution, particle draw-range, and post-FX passes to maintain locked **60+ FPS**.
+* Native FP32 vector math and branchless GLSL fragment routines.
 
-* `AnalyserNode` with `fftSize = 1024`, `smoothingTimeConstant = 0.82`.
-* Bands are read from `Uint8Array` FFT data with a perceptual low-bin tilt;
-  the waveform comes from `Float32Array` time-domain data.
-* **Adaptive normalisation** tracks the rolling RMS so a quiet microphone drives the scene
-  exactly as hard as a mastered track.
-* **Beat detection** compares the sub-band against a 48-frame rolling mean, weighted by
-  variance, with a 220 ms refractory window; median inter-onset interval → live BPM.
-* Attack/release envelopes per band (fast attack, slow release) keep motion punchy but
-  free of flicker.
+---
 
-## Visual pipeline
+## 📄 License & Attribution
 
-1. **Raymarched SDF tunnel** — fullscreen NDC quad, inside-measured distance field:
-   14 radial I-beams, conduits, plated floor deck with a glowing grid, and a rotating
-   fractal monolith gate every 24 units. Proximity-glow accumulation fakes volumetrics.
-   Triplanar-ish panel seams, brushed-steel grain, ACES-fitted tone curve.
-2. **Point cloud** — up to 160 000 points, custom GLSL vertex shader: 3D simplex
-   displacement field, differential vortex rotation, kick shockwave shell, treble
-   micro-jitter, additive soft sprites with depth fade.
-3. **Core** — noise-displaced icosphere with analytically re-derived normals, procedural
-   metal shading (dual specular lobes, fresnel rim, acid veins, machined scan bands) plus
-   an additive wireframe shell.
-4. **Strobes & lasers** — instanced additive rings (rotating dash pattern) and a 44-beam
-   laser fan, both phase-locked to the sub-band.
-5. **Post** — mipmap Bloom → Glitch (transient-gated `CONSTANT_WILD` bursts) →
-   Chromatic Aberration → Scanline → premultiplied Grain → Vignette.
-   Every parameter is audio-modulated per frame.
-
-## Performance
-
-* **AUTO-PERF governor** — watches the frame rate once per 1.1 s and quietly trades
-  device pixel ratio and particle draw-range (4 levels) to hold 60 fps, then steps back up.
-  Runs entirely outside React.
-* Three quality presets (ECO / BALANCED / ULTRA) set DPR clamps, march steps and the
-  particle budget; core tessellation and instance counts follow.
-* `antialias: false`, `stencil: false`, no shadow maps, no post-processing normal pass,
-  `multisampling: 0`, HDR half-float composer targets.
-
-## Inputs
-
-| Mode | Notes |
-|------|-------|
-| **SYNTH** | Built-in generator — instant, no permissions, deterministic 132 BPM loop |
-| **MIC** | `getUserMedia` with AGC/NS/EC off; monitoring muted to prevent feedback |
-| **SYSTEM** | `getDisplayMedia` tab/desktop audio with explicit "no audio track" detection |
-| **FILE** | Object-URL `MediaElementSource`; loop, seek, volume, drag & drop |
-
-Every failure path is handled and surfaced as a toast: permission denial, missing device,
-cancelled share, missing audio track, decode failure and unsupported APIs.
-
-## Capture
-
-* **REC** — `MediaRecorder` at 60 fps, VP9/Opus (VP8/MP4 fallback), ~14 Mbps, with the
-  source audio muxed in from a `MediaStreamAudioDestinationNode` tapped off the analyser,
-  so the exported clip always contains the music.
-* **PNG** — lossless still straight from the framebuffer (`preserveDrawingBuffer: true`).
-
-## Shortcuts
-
-`SPACE` play/pause · `H` hide UI · `F` fullscreen · `1-4` palette · `R` record ·
-`P` PNG · `G` glitch · `A` auto-perf · `L` auto-look · `←/→` seek · `?` sheet
-
-Drop an audio file anywhere to load it. The interface auto-hides after 6 s of inactivity.
+Architected & Engineered by **Ahmed Yasser (YASLOGIST)**.  
+Released under the **MIT License**.
