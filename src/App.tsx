@@ -12,7 +12,15 @@ import {
   type InputMode,
   type VisualSettings,
 } from "./audio/state";
-import { captureSupported, downloadBlob, snapshot, stamp, startRecording, type RecorderHandle } from "./media/Recorder";
+import {
+  captureSupported,
+  downloadBlob,
+  snapshot,
+  stamp,
+  startRecording,
+  type RecorderHandle,
+} from "./media/Recorder";
+import { applyLook, extractLook, loadBank, readLookFromLocation, saveBankSlot } from "./presets/lookPresets";
 import Scene from "./three/Scene";
 import { FaultBoundary } from "./ui/ErrorBoundary";
 import { Hud, type Toast } from "./ui/Hud";
@@ -48,12 +56,12 @@ const Stage = memo(function Stage({ settings }: { settings: VisualSettings }) {
 /* ── boot gate ──────────────────────────────────────────────────────────── */
 
 const SPECS: [string, string][] = [
-    ["ENGINE", "THREE r180 · R3F 9 · GLSL3"],
-    ["POST FX", "BLOOM · CHROMA · GRAIN · GLITCH"],
-    ["GEOMETRY", "SDF TUNNEL · 160K PTS · FFT RING"],
-    ["ANALYSIS", "FFT 1024 · 4 BAND · TRANSIENT LOCK"],
-    ["LOOKS", "10 PALETTES · AUTO-PHRASE SYNC"],
-    ["CAPTURE", "60FPS WEBM + PNG STILL"],
+  ["ENGINE", "THREE r180 · R3F 9 · GLSL3"],
+  ["POST FX", "BLOOM · CHROMA · GRAIN · GLITCH"],
+  ["GEOMETRY", "SDF TUNNEL · 160K PTS · FFT RING"],
+  ["ANALYSIS", "FFT 1024 · 4 BAND · TRANSIENT LOCK"],
+  ["LOOKS", `${PALETTES.length} PALETTES · 8 PRESET SLOTS`],
+  ["CAPTURE", "60FPS WEBM + PNG STILL"],
 ];
 
 function Boot({ onEnter, busy }: { onEnter: (mode: InputMode) => void; busy: boolean }) {
@@ -80,12 +88,15 @@ function Boot({ onEnter, busy }: { onEnter: (mode: InputMode) => void; busy: boo
         </div>
 
         <h1
-          className="rise mt-5 text-[13vw] leading-[0.86] font-bold tracking-[-0.02em] sm:text-[86px]"
+          className="rise mt-5 text-[12.5vw] leading-[0.9] font-bold tracking-[-0.02em] sm:text-[72px]"
           style={{ animationDelay: "60ms" }}
         >
-          <span className="text-[#e9eef2]">VOID</span>
-          <span className="text-[#2c3338]">//</span>
+          <span className="block">
+            <span className="text-[#e9eef2]">YASLOGIST</span>
+            <span className="text-[#2c3338]">//</span>
+          </span>
           <span
+            className="block"
             style={{
               background: "linear-gradient(96deg,#00F0FF 0%,#7B2CBF 55%,#FF2E97 100%)",
               WebkitBackgroundClip: "text",
@@ -93,7 +104,7 @@ function Boot({ onEnter, busy }: { onEnter: (mode: InputMode) => void; busy: boo
               color: "transparent",
             }}
           >
-            REACTOR
+            SOUNDVIS
           </span>
         </h1>
 
@@ -101,12 +112,15 @@ function Boot({ onEnter, busy }: { onEnter: (mode: InputMode) => void; busy: boo
           className="rise mt-4 max-w-[54ch] text-[11px] leading-relaxed tracking-[0.06em] text-[#8b98a1] normal-case"
           style={{ animationDelay: "120ms" }}
         >
-          An ultra-high-performance audio-reactive instrument for industrial and melodic techno.
-          Sub-bass drives the tunnel geometry, mids morph the field, treble ignites the bloom.
-          Everything is synthesised and rendered locally — nothing is uploaded, nothing is tracked.
+          An ultra-high-performance audio-reactive instrument for industrial and melodic techno. Sub-bass
+          drives the tunnel geometry, mids morph the field, treble ignites the bloom. Everything is
+          synthesised and rendered locally — nothing is uploaded, nothing is tracked.
         </p>
 
-        <div className="rise mt-7 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3" style={{ animationDelay: "180ms" }}>
+        <div
+          className="rise mt-7 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3"
+          style={{ animationDelay: "180ms" }}
+        >
           {SPECS.map(([k, v]) => (
             <div key={k} className="border-t border-white/10 pt-2">
               <div className="text-[8px] tracking-[0.22em] text-[#4a555d]">{k}</div>
@@ -156,7 +170,9 @@ const KEYS: [string, string][] = [
   ["SPACE", "Play / pause the deck"],
   ["H", "Hide or show the interface"],
   ["F", "Toggle fullscreen"],
-  ["1 – 9 / 0", "Palette recall (10 looks)"],
+  ["1 – 9 / 0", `Palette recall (${PALETTES.length} looks)`],
+  ["F1 – F8", "Recall look preset slot"],
+  ["⇧ F1 – F8", "Store current look in slot"],
   ["R", "Start / stop video capture"],
   ["P", "Save a PNG still"],
   ["G", "Toggle glitch bursts"],
@@ -201,7 +217,12 @@ let toastId = 0;
 
 export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [settings, setSettings] = useState<VisualSettings>(() => loadSettings());
+  const [settings, setSettings] = useState<VisualSettings>(() => {
+    const base = loadSettings();
+    // shared links carry a look in the URL hash (#look=…) — apply it on boot
+    const shared = readLookFromLocation();
+    return shared ? { ...base, ...applyLook(shared) } : base;
+  });
   const [mode, setMode] = useState<InputMode | null>(null);
   const [booted, setBooted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -269,7 +290,11 @@ export default function App() {
         } else if (next === "file") {
           toast({ tone: "ok", title: "TRACK LOADED", body: file?.name });
         } else if (next === "synth") {
-          toast({ tone: "ok", title: "INTERNAL GENERATOR ONLINE", body: "132 BPM · A MINOR · PEAK-TIME LOOP" });
+          toast({
+            tone: "ok",
+            title: "INTERNAL GENERATOR ONLINE",
+            body: "132 BPM · A MINOR · PEAK-TIME LOOP",
+          });
         }
       } catch (err) {
         const e = err as AudioEngineError;
@@ -302,7 +327,7 @@ export default function App() {
   const handleSnapshot = useCallback(() => {
     const canvas = perfBridge.canvas;
     if (!canvas) return;
-    if (snapshot(canvas, `void-reactor-${stamp()}`)) {
+    if (snapshot(canvas, `yaslogist-soundvis-${stamp()}`)) {
       toast({ tone: "ok", title: "STILL SAVED", body: "PNG written to your downloads." });
     } else {
       toast({ tone: "error", title: "CAPTURE FAILED", body: "The framebuffer could not be read." });
@@ -327,8 +352,12 @@ export default function App() {
       engine.audioStream,
       (s) => setRecordSeconds(s),
       (blob, ext, seconds) => {
-        downloadBlob(blob, `void-reactor-${stamp()}.${ext}`);
-        toast({ tone: "ok", title: "TAKE SAVED", body: `${ext.toUpperCase()} · ${seconds.toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB` });
+        downloadBlob(blob, `yaslogist-soundvis-${stamp()}.${ext}`);
+        toast({
+          tone: "ok",
+          title: "TAKE SAVED",
+          body: `${ext.toUpperCase()} · ${seconds.toFixed(1)}s · ${(blob.size / 1e6).toFixed(1)} MB`,
+        });
       },
       (message) => toast({ tone: "error", title: "RECORDER ERROR", body: message }),
     );
@@ -349,17 +378,16 @@ export default function App() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [stopRecording]);
 
-
   /* ── BREATHE ANIMATION ── */
   useEffect(() => {
     let raf: number;
     let isBreathing = false;
     let cooldown = 0;
-    
+
     const loop = () => {
       const now = performance.now();
       const sub = audioState.sub;
-      
+
       if (sub > 0.8 && now > cooldown) {
         if (!isBreathing && containerRef.current) {
           containerRef.current.classList.remove("animate-breathe");
@@ -370,16 +398,29 @@ export default function App() {
           cooldown = now + 300; // wait for animation to finish
         }
       }
-      
+
       if (isBreathing && now > cooldown) {
-         isBreathing = false;
+        isBreathing = false;
       }
-      
+
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+      else await document.exitFullscreen();
+    } catch {
+      toast({
+        tone: "error",
+        title: "FULLSCREEN BLOCKED",
+        body: "The browser refused the fullscreen request.",
+      });
+    }
+  }, [toast]);
 
   /* ── keyboard ────────────────────────────────────────────────────────── */
   const toggleRecordRef = useRef(handleToggleRecord);
@@ -393,6 +434,34 @@ export default function App() {
       if (tag === "INPUT" || tag === "TEXTAREA") return;
       if (e.key === "Escape") {
         setHelp(false);
+        return;
+      }
+      /* look preset bank: F1–F8 recall · ⇧F1–F8 store */
+      const slot = /^F([1-8])$/.exec(e.code);
+      if (slot) {
+        e.preventDefault();
+        const index = Number(slot[1]) - 1;
+        if (e.shiftKey) {
+          const current = settingsRef.current;
+          const preset = extractLook(
+            `${PALETTES[current.palette % PALETTES.length].name} · S${current.shape + 1}`,
+            current,
+          );
+          saveBankSlot(index, preset);
+          toast({ tone: "ok", title: `SLOT ${index + 1} STORED`, body: preset.name });
+        } else {
+          const preset = loadBank()[index];
+          if (!preset) {
+            toast({
+              tone: "info",
+              title: `SLOT ${index + 1} EMPTY`,
+              body: "Store a look with ⇧+F" + (index + 1) + ".",
+            });
+          } else {
+            patch(applyLook(preset));
+            toast({ tone: "ok", title: `LOOK ${index + 1} RECALLED`, body: preset.name });
+          }
+        }
         return;
       }
       switch (e.key.toLowerCase()) {
@@ -450,7 +519,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleToggle, patch]);
+  }, [handleToggle, patch, toast, toggleFullscreen]);
 
   /* ── global fault traps (rAF / window / unhandled rejections) ────────── */
   useEffect(() => {
@@ -458,8 +527,7 @@ export default function App() {
     const onLost = () => {
       raiseFault({
         title: "GPU CONTEXT LOST",
-        message:
-          "The WebGL context was reclaimed by the driver. Remount the engine to rebuild the pipeline.",
+        message: "The WebGL context was reclaimed by the driver. Remount the engine to rebuild the pipeline.",
         fatal: true,
       });
     };
@@ -544,15 +612,6 @@ export default function App() {
     };
   }, [settings.autoLook]);
 
-  async function toggleFullscreen() {
-    try {
-      if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
-      else await document.exitFullscreen();
-    } catch {
-      toast({ tone: "error", title: "FULLSCREEN BLOCKED", body: "The browser refused the fullscreen request." });
-    }
-  }
-
   return (
     <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-[#050505]">
       <FaultBoundary
@@ -593,6 +652,7 @@ export default function App() {
           recordSeconds={recordSeconds}
           captureReady={captureReady}
           onHelp={() => setHelp(true)}
+          onToast={toast}
         />
       ) : (
         <Boot busy={busy} onEnter={(m) => void startSource(m)} />
@@ -612,7 +672,10 @@ export default function App() {
 
       {dragging ? (
         <div className="pointer-events-none absolute inset-0 z-50 grid place-items-center bg-[#050505]/80 backdrop-blur-sm">
-          <div className="border border-dashed px-10 py-8 text-center" style={{ borderColor: "var(--accent)" }}>
+          <div
+            className="border border-dashed px-10 py-8 text-center"
+            style={{ borderColor: "var(--accent)" }}
+          >
             <div className="text-[13px] font-bold tracking-[0.3em]" style={{ color: "var(--accent)" }}>
               DROP AUDIO
             </div>
@@ -620,7 +683,6 @@ export default function App() {
           </div>
         </div>
       ) : null}
-
     </div>
   );
 }

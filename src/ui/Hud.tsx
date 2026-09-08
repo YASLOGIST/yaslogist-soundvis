@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { engine } from "../audio/AudioEngine";
 import {
   LOOK_PRESETS,
@@ -11,6 +11,17 @@ import {
   type QualityLevel,
   type VisualSettings,
 } from "../audio/state";
+import {
+  PRESET_SLOTS,
+  applyLook,
+  buildShareUrl,
+  clearBankSlot,
+  extractLook,
+  loadBank,
+  parseLook,
+  saveBankSlot,
+  type LookPreset,
+} from "../presets/lookPresets";
 
 export interface Toast {
   id: number;
@@ -41,6 +52,7 @@ interface HudProps {
   recordSeconds: number;
   captureReady: boolean;
   onHelp: () => void;
+  onToast: (t: Omit<Toast, "id">) => void;
 }
 
 /* ── small building blocks ──────────────────────────────────────────────── */
@@ -98,22 +110,9 @@ function Slider({
   );
 }
 
-function Toggle({
-  label,
-  on,
-  onClick,
-}: {
-  label: string;
-  on: boolean;
-  onClick: () => void;
-}) {
+function Toggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-active={on}
-      className="btn hud px-2 py-[5px] text-[9px]"
-    >
+    <button type="button" onClick={onClick} data-active={on} className="btn hud px-2 py-[5px] text-[9px]">
       {label}
     </button>
   );
@@ -151,7 +150,6 @@ function Readouts() {
   );
 }
 
-
 function SidebarSpectrum({ active }: { active: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -165,24 +163,24 @@ function SidebarSpectrum({ active }: { active: boolean }) {
     let raf: number;
     const draw = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const data = audioState.spectrum; 
-      
+      const data = audioState.spectrum;
+
       const bars = 64;
       const barHeight = canvas.height / bars;
-      
+
       for (let i = 0; i < bars; i++) {
-        const val = data[i * 3]; 
+        const val = data[i * 3];
         const w = (val / 255) * canvas.width;
-        
+
         ctx.fillStyle = `hsla(${180 + i * 2}, 100%, 60%, 0.6)`;
         // Draw from bottom to top
         ctx.fillRect(0, canvas.height - i * barHeight - barHeight + 1, w, barHeight - 1);
       }
-      
+
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
-    
+
     return () => cancelAnimationFrame(raf);
   }, [active]);
 
@@ -190,7 +188,12 @@ function SidebarSpectrum({ active }: { active: boolean }) {
 
   return (
     <div className="absolute left-0 top-0 bottom-0 w-20 sm:w-24 pointer-events-none flex flex-col justify-center z-40 opacity-50 mix-blend-screen pl-2">
-      <canvas ref={canvasRef} width={64} height={512} className="w-12 sm:w-16 max-h-[65vh] h-[360px] sm:h-[512px]" />
+      <canvas
+        ref={canvasRef}
+        width={64}
+        height={512}
+        className="w-12 sm:w-16 max-h-[65vh] h-[360px] sm:h-[512px]"
+      />
     </div>
   );
 }
@@ -276,7 +279,12 @@ function Transport({
         </button>
         <div className="min-w-0 leading-tight">
           <div className="text-[10px] font-bold tracking-[0.18em] text-[#e9eef2]">
-            <span className="truncate">{fileName || (mode === "synth" ? `INTERNAL SYNTH · ${Math.round(audioState.synthBpm)} BPM` : mode ?? "IDLE")}</span>
+            <span className="truncate">
+              {fileName ||
+                (mode === "synth"
+                  ? `INTERNAL SYNTH · ${Math.round(audioState.synthBpm)} BPM`
+                  : (mode ?? "IDLE"))}
+            </span>
           </div>
           <div className="text-[8px] tracking-[0.16em] text-[#5c6870]">
             {duration > 0 ? `${fmt(time)} / ${fmt(duration)}` : "LIVE DECK"}
@@ -295,9 +303,7 @@ function Transport({
           disabled={!duration}
           aria-label="Seek"
           className="flex-1 opacity-70 hover:opacity-100 disabled:opacity-20"
-          style={{
-            ["--pct" as any]: `${duration > 0 ? (time / duration) * 100 : 0}%`,
-          }}
+          style={{ "--pct": `${duration > 0 ? (time / duration) * 100 : 0}%` } as React.CSSProperties}
         />
         <div className="flex items-center gap-1.5">
           <Label right={`${Math.round(volume * 100)}`}>VOL</Label>
@@ -310,9 +316,7 @@ function Transport({
             onChange={(e) => onVolume(Number(e.target.value))}
             aria-label="Volume"
             className="w-16 opacity-70 hover:opacity-100"
-            style={{
-              ["--pct" as any]: `${volume * 100}%`,
-            }}
+            style={{ "--pct": `${volume * 100}%` } as React.CSSProperties}
           />
         </div>
       </div>
@@ -323,6 +327,8 @@ function Transport({
 /* ── HUD root ───────────────────────────────────────────────────────────── */
 
 const FX_LABELS = ["FULL", "CORE", "MINIMAL", "RAW"];
+
+const AUDIO_PROFILES: VisualSettings["audioProfile"][] = ["smooth", "standard", "dynamic", "hyper"];
 
 const SOURCES: { id: InputMode; label: string; hint: string }[] = [
   { id: "synth", label: "SYNTH", hint: "Internal generator — zero setup" },
@@ -353,10 +359,14 @@ function HudInner({
   recordSeconds,
   captureReady,
   onHelp,
+  onToast,
 }: HudProps) {
   const fileInput = useRef<HTMLInputElement>(null);
+  const presetInput = useRef<HTMLInputElement>(null);
+  const [bank, setBank] = useState<(LookPreset | null)[]>(() => loadBank());
   const [governor, setGovernor] = useState(0);
-  const [hint, setHint] = useState<string>("INTERNAL GENERATOR ONLINE — DROP AN AUDIO FILE ANYWHERE");
+  // status line: derived from the source, with a transient override (randomizer)
+  const [hintOverride, setHintOverride] = useState<string | null>(null);
   const [isIdle, setIsIdle] = useState(false);
 
   useEffect(() => {
@@ -368,16 +378,16 @@ function HudInner({
         timeout = setTimeout(() => setIsIdle(true), 5000);
       }
     };
-    
+
     if (settings.autoHideUi) wake();
-    
-    window.addEventListener('mousemove', wake);
-    window.addEventListener('keydown', wake);
-    window.addEventListener('touchstart', wake);
+
+    window.addEventListener("mousemove", wake);
+    window.addEventListener("keydown", wake);
+    window.addEventListener("touchstart", wake);
     return () => {
-      window.removeEventListener('mousemove', wake);
-      window.removeEventListener('keydown', wake);
-      window.removeEventListener('touchstart', wake);
+      window.removeEventListener("mousemove", wake);
+      window.removeEventListener("keydown", wake);
+      window.removeEventListener("touchstart", wake);
       clearTimeout(timeout);
     };
   }, [settings.autoHideUi]);
@@ -390,20 +400,22 @@ function HudInner({
 
   const pickFile = useCallback(() => fileInput.current?.click(), []);
 
+  const derivedHint = useMemo(() => {
+    if (mode === "file" && fileName) return `DECK LOADED · ${fileName.toUpperCase()}`;
+    if (mode === "mic") return "LIVE INPUT — MONITORING MUTED TO PREVENT FEEDBACK";
+    if (mode === "system") return "SYSTEM BUS CAPTURED";
+    if (mode === "synth") return "INTERNAL GENERATOR ONLINE — DROP AN AUDIO FILE ANYWHERE";
+    return "AWAITING SOURCE";
+  }, [mode, fileName]);
+  const hint = hintOverride ?? derivedHint;
+
   useEffect(() => {
     const c = settings.uiContrast ?? 0.8;
-    const op = (0.35 + c * 0.60).toFixed(2);
+    const op = (0.35 + c * 0.6).toFixed(2);
     const blurVal = `${Math.round(4 + c * 20)}px`;
     document.documentElement.style.setProperty("--ui-opacity", op);
     document.documentElement.style.setProperty("--ui-blur", blurVal);
   }, [settings.uiContrast]);
-
-  useEffect(() => {
-    if (mode === "file" && fileName) setHint(`DECK LOADED · ${fileName.toUpperCase()}`);
-    else if (mode === "mic") setHint("LIVE INPUT — MONITORING MUTED TO PREVENT FEEDBACK");
-    else if (mode === "system") setHint("SYSTEM BUS CAPTURED");
-    else if (mode === "synth") setHint("INTERNAL GENERATOR ONLINE — DROP AN AUDIO FILE ANYWHERE");
-  }, [mode, fileName]);
 
   const randomizeScene = useCallback(() => {
     const bloomProfiles = ["soft", "hard", "laser"] as const;
@@ -414,7 +426,7 @@ function HudInner({
     const newIntensity = +(0.4 + Math.random() * 0.8).toFixed(2);
     const newBloom = +(0.6 + Math.random() * 1.4).toFixed(2);
     const newSoftening = +(0.2 + Math.random() * 0.6).toFixed(2);
-    
+
     patch({
       palette: newPalette,
       shape: newShape,
@@ -435,8 +447,103 @@ function HudInner({
       towers: Math.random() > 0.4,
     });
 
-    setHint(`SCENE RANDOMIZED · PALETTE #${newPalette + 1} · SHAPE #${newShape + 1}`);
+    setHintOverride(`SCENE RANDOMIZED · PALETTE #${newPalette + 1} · SHAPE #${newShape + 1}`);
   }, [patch]);
+
+  /* ── look preset bank ─────────────────────────────────────────────────── */
+
+  const currentLookName = useCallback(
+    () => `${PALETTES[settings.palette % PALETTES.length].name} · S${settings.shape + 1}`,
+    [settings.palette, settings.shape],
+  );
+
+  const storeSlot = useCallback(
+    (index: number) => {
+      const preset = extractLook(currentLookName(), settings);
+      saveBankSlot(index, preset);
+      setBank(loadBank());
+      onToast({ tone: "ok", title: `SLOT ${index + 1} STORED`, body: preset.name });
+    },
+    [settings, currentLookName, onToast],
+  );
+
+  const recallSlot = useCallback(
+    (index: number) => {
+      const preset = bank[index] ?? loadBank()[index];
+      if (!preset) {
+        onToast({
+          tone: "info",
+          title: `SLOT ${index + 1} EMPTY`,
+          body: "⇧-click a slot (or press ⇧+F" + (index + 1) + ") to store the current look.",
+        });
+        return;
+      }
+      patch(applyLook(preset));
+      onToast({ tone: "ok", title: `LOOK ${index + 1} RECALLED`, body: preset.name });
+    },
+    [bank, patch, onToast],
+  );
+
+  const clearSlot = useCallback(
+    (index: number) => {
+      clearBankSlot(index);
+      setBank(loadBank());
+      onToast({ tone: "info", title: `SLOT ${index + 1} CLEARED` });
+    },
+    [onToast],
+  );
+
+  const exportLook = useCallback(() => {
+    const preset = extractLook(currentLookName(), settings);
+    const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `yaslogist-look-${
+      preset.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "preset"
+    }.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onToast({ tone: "ok", title: "LOOK EXPORTED", body: `${a.download}` });
+  }, [settings, currentLookName, onToast]);
+
+  const importLook = useCallback(
+    async (file: File) => {
+      try {
+        const preset = parseLook(JSON.parse(await file.text()));
+        if (!preset) {
+          onToast({
+            tone: "error",
+            title: "IMPORT FAILED",
+            body: "Not a valid YASLOGIST look preset (v1 JSON).",
+          });
+          return;
+        }
+        patch(applyLook(preset));
+        onToast({ tone: "ok", title: "LOOK IMPORTED", body: preset.name });
+      } catch {
+        onToast({ tone: "error", title: "IMPORT FAILED", body: "The file could not be read as JSON." });
+      }
+    },
+    [patch, onToast],
+  );
+
+  const shareLook = useCallback(async () => {
+    const url = buildShareUrl(extractLook(currentLookName(), settings));
+    try {
+      await navigator.clipboard.writeText(url);
+      onToast({
+        tone: "ok",
+        title: "SHARE LINK COPIED",
+        body: "The current look rides in the URL (#look=…).",
+      });
+    } catch {
+      onToast({ tone: "error", title: "CLIPBOARD BLOCKED", body: "The browser refused clipboard access." });
+    }
+  }, [settings, currentLookName, onToast]);
 
   const [dockOpen, setDockOpen] = useState(true);
 
@@ -445,12 +552,21 @@ function HudInner({
       <div className="fixed top-4 right-4 z-50 flex items-center gap-3 font-mono text-[9px] sm:text-[10px] text-white/80 bg-black/40 backdrop-blur-2xl px-3 py-1.5 border border-cyan-500/20 rounded-full tracking-widest uppercase shadow-[0_0_20px_rgba(0,240,255,0.15)] pointer-events-auto">
         <div className="flex items-center gap-2">
           <div className="w-1.5 h-1.5 bg-cyan-400 animate-pulse rounded-full shadow-[0_0_8px_#00F0FF]" />
-          <span>FPS: <span ref={(el) => { hudBridge.fps = el; }}>--</span></span>
+          <span>
+            FPS:{" "}
+            <span
+              ref={(el) => {
+                hudBridge.fps = el;
+              }}
+            >
+              --
+            </span>
+          </span>
         </div>
         <div className="w-px h-3 bg-white/20" />
-        <span>{mode === "synth" ? `SYNTH ${Math.round(audioState.synthBpm)}` : mode ?? "IDLE"}</span>
+        <span>{mode === "synth" ? `SYNTH ${Math.round(audioState.synthBpm)}` : (mode ?? "IDLE")}</span>
         <div className="w-px h-3 bg-white/20" />
-        <button 
+        <button
           onClick={() => patch({ zenMode: false })}
           className="hover:text-cyan-300 text-cyan-400 font-bold px-1.5 py-0.5 transition-colors cursor-pointer"
           title="Exit Zen Mode (Z)"
@@ -471,6 +587,17 @@ function HudInner({
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (f) onFile(f);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={presetInput}
+        type="file"
+        accept=".json,application/json"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void importLook(f);
           e.target.value = "";
         }}
       />
@@ -495,7 +622,7 @@ function HudInner({
                 />
                 <div className="leading-none">
                   <div className="text-[12px] font-bold tracking-[0.32em] text-[#e9eef2]">
-                    VOID<span className="text-[#4a555d]">//</span>REACTOR
+                    YASLOGIST<span className="text-[#4a555d]">//</span>SOUNDVIS
                   </div>
                   <div className="mt-1 text-[8px] tracking-[0.24em] text-[#5c6870]">
                     FFT 1024 · ULTRA SMOOTH · WEBGL2
@@ -520,7 +647,9 @@ function HudInner({
                 title={captureReady ? "Record performance (R)" : "MediaRecorder unavailable"}
               >
                 <span
-                  className={recording ? "blink block h-1.5 w-1.5 rounded-full" : "block h-1.5 w-1.5 rounded-full"}
+                  className={
+                    recording ? "blink block h-1.5 w-1.5 rounded-full" : "block h-1.5 w-1.5 rounded-full"
+                  }
                   style={{ background: recording ? "#FF3B5C" : "currentColor" }}
                 />
                 {recording ? `${recordSeconds.toFixed(1)}S` : "REC"}
@@ -533,7 +662,12 @@ function HudInner({
               >
                 PNG
               </button>
-              <button type="button" onClick={onHelp} className="btn hud px-2 py-[6px] text-[9px]" title="Shortcuts (?)">
+              <button
+                type="button"
+                onClick={onHelp}
+                className="btn hud px-2 py-[6px] text-[9px]"
+                title="Shortcuts (?)"
+              >
                 ?
               </button>
             </div>
@@ -554,7 +688,12 @@ function HudInner({
             >
               ◫ DOCK
             </button>
-            <button type="button" onClick={onFullscreen} className="btn hud panel px-2.5 py-[7px]" title="Fullscreen (F)">
+            <button
+              type="button"
+              onClick={onFullscreen}
+              className="btn hud panel px-2.5 py-[7px]"
+              title="Fullscreen (F)"
+            >
               ⛶
             </button>
             <button
@@ -576,7 +715,9 @@ function HudInner({
         {/* Bottom Left Real-Time Audio Analysis Console */}
         <div className="flex flex-col gap-3 max-w-[min(540px,calc(100vw-340px))] pointer-events-auto">
           <div className="rise hidden items-center gap-2 md:flex">
-            <div className="panel px-2.5 py-1 text-[9px] tracking-[0.2em] text-[#5c6870] truncate">{hint}</div>
+            <div className="panel px-2.5 py-1 text-[9px] tracking-[0.2em] text-[#5c6870] truncate">
+              {hint}
+            </div>
           </div>
 
           <div className="panel bracket rise flex min-w-0 flex-col gap-3 p-3 sm:flex-row sm:items-end">
@@ -662,7 +803,7 @@ function HudInner({
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_#00F0FF]" />
               <span className="text-[11px] font-bold tracking-[0.22em] text-[#e9eef2] uppercase">
-                VOID // CONTROLS
+                SOUNDVIS // CONTROLS
               </span>
             </div>
             <div className="flex items-center gap-1">
@@ -712,6 +853,88 @@ function HudInner({
                 on={settings.autoLook}
                 onClick={() => patch({ autoLook: !settings.autoLook })}
               />
+            </div>
+          </div>
+
+          {/* Look Preset Bank — save / recall / share full looks */}
+          <div className="space-y-1.5">
+            <Label right={`${bank.filter(Boolean).length}/${PRESET_SLOTS}`}>PRESET BANK</Label>
+            <div className="grid grid-cols-2 gap-1">
+              {Array.from({ length: PRESET_SLOTS }, (_, i) => {
+                const preset = bank[i] ?? null;
+                const accent = preset
+                  ? PALETTES[preset.settings.palette % PALETTES.length].hex[0]
+                  : undefined;
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={(e) => (e.shiftKey ? storeSlot(i) : recallSlot(i))}
+                    onAuxClick={(e) => {
+                      if (e.button === 1 || e.altKey) {
+                        e.preventDefault();
+                        clearSlot(i);
+                      }
+                    }}
+                    className="btn hud flex items-center gap-1.5 px-1.5 py-[5px] text-[8px]"
+                    title={
+                      preset
+                        ? `${preset.name} — click recall · ⇧click overwrite · alt-click clear`
+                        : `Empty — ⇧click to store the current look (⇧+F${i + 1})`
+                    }
+                  >
+                    <span
+                      className="block h-1.5 w-1.5 shrink-0 rounded-[1px]"
+                      style={
+                        accent
+                          ? { background: accent, boxShadow: `0 0 6px ${accent}` }
+                          : { background: "rgba(255,255,255,0.18)" }
+                      }
+                    />
+                    <span className="text-[#5c6870]">F{i + 1}</span>
+                    <span className="truncate text-left">
+                      {preset ? preset.name : <span className="text-[#3d464d]">EMPTY</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1 pt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  const firstEmpty = bank.findIndex((p) => !p);
+                  storeSlot(firstEmpty === -1 ? 0 : firstEmpty);
+                }}
+                className="btn hud px-2 py-[4px] text-[8.5px]"
+                title="Store the current look in the first empty slot"
+              >
+                ⬤ SAVE
+              </button>
+              <button
+                type="button"
+                onClick={exportLook}
+                className="btn hud px-2 py-[4px] text-[8.5px]"
+                title="Download the current look as JSON"
+              >
+                ↧ EXPORT
+              </button>
+              <button
+                type="button"
+                onClick={() => presetInput.current?.click()}
+                className="btn hud px-2 py-[4px] text-[8.5px]"
+                title="Load a shared .json look preset"
+              >
+                ↥ IMPORT
+              </button>
+              <button
+                type="button"
+                onClick={() => void shareLook()}
+                className="btn hud px-2 py-[4px] text-[8.5px]"
+                title="Copy a share link with the current look encoded in the URL"
+              >
+                ⛓ LINK
+              </button>
             </div>
           </div>
 
@@ -770,14 +993,14 @@ function HudInner({
                   title="Tap to set synthesizer BPM"
                   onClick={() => {
                     const now = performance.now();
-                    const g = window as any;
+                    const g = window as unknown as { _tapTimes?: number[] };
                     if (!g._tapTimes) g._tapTimes = [];
                     const times = g._tapTimes;
                     times.push(now);
                     if (times.length > 5) times.shift();
 
                     if (times.length >= 2) {
-                      const intervals = [];
+                      const intervals: number[] = [];
                       for (let i = 1; i < times.length; i++) {
                         intervals.push(times[i] - times[i - 1]);
                       }
@@ -785,9 +1008,7 @@ function HudInner({
                       const bpm = 60000 / avg;
                       if (bpm > 40 && bpm < 300) {
                         audioState.synthBpm = Math.round(bpm);
-                        import("../audio/AudioEngine").then((m) =>
-                          m.engine.setSynthBPM(audioState.synthBpm),
-                        );
+                        import("../audio/AudioEngine").then((m) => m.engine.setSynthBPM(audioState.synthBpm));
                       }
                     }
                   }}
@@ -800,11 +1021,11 @@ function HudInner({
 
             <div className="flex items-center gap-1 pt-1">
               <span className="text-[8px] tracking-[0.16em] text-[#5c6870]">MIC EQ:</span>
-              {["smooth", "standard", "dynamic", "hyper"].map((p) => (
+              {AUDIO_PROFILES.map((p) => (
                 <button
                   key={p}
                   type="button"
-                  onClick={() => patch({ audioProfile: p as any })}
+                  onClick={() => patch({ audioProfile: p })}
                   data-active={settings.audioProfile === p}
                   className="btn hud px-1.5 py-[2px] text-[7.5px]"
                 >
@@ -1073,9 +1294,7 @@ function HudInner({
                     key={q}
                     label={QUALITY_PRESETS[q].label}
                     on={settings.quality === q}
-                    onClick={() =>
-                      patch({ quality: q, particles: QUALITY_PRESETS[q].particles })
-                    }
+                    onClick={() => patch({ quality: q, particles: QUALITY_PRESETS[q].particles })}
                   />
                 ))}
               </div>
@@ -1103,36 +1322,20 @@ function HudInner({
                 on={settings.shape > 0}
                 onClick={() => patch({ shape: (settings.shape + 1) % 12 })}
               />
-              <Toggle
-                label="LQD"
-                on={settings.liquid}
-                onClick={() => patch({ liquid: !settings.liquid })}
-              />
+              <Toggle label="LQD" on={settings.liquid} onClick={() => patch({ liquid: !settings.liquid })} />
               <Toggle
                 label="FLX"
                 on={settings.energyFlux}
                 onClick={() => patch({ energyFlux: !settings.energyFlux })}
               />
-              <Toggle
-                label="VRX"
-                on={settings.vortex}
-                onClick={() => patch({ vortex: !settings.vortex })}
-              />
-              <Toggle
-                label="GRD"
-                on={settings.grid}
-                onClick={() => patch({ grid: !settings.grid })}
-              />
+              <Toggle label="VRX" on={settings.vortex} onClick={() => patch({ vortex: !settings.vortex })} />
+              <Toggle label="GRD" on={settings.grid} onClick={() => patch({ grid: !settings.grid })} />
               <Toggle
                 label="MAG"
                 on={settings.magnetic}
                 onClick={() => patch({ magnetic: !settings.magnetic })}
               />
-              <Toggle
-                label="RAY"
-                on={settings.rays}
-                onClick={() => patch({ rays: !settings.rays })}
-              />
+              <Toggle label="RAY" on={settings.rays} onClick={() => patch({ rays: !settings.rays })} />
               <Toggle
                 label="STRB"
                 on={settings.strobeMode}
@@ -1153,51 +1356,23 @@ function HudInner({
                 on={settings.autoHideUi}
                 onClick={() => patch({ autoHideUi: !settings.autoHideUi })}
               />
-              <Toggle
-                label="TUN"
-                on={settings.tunnel}
-                onClick={() => patch({ tunnel: !settings.tunnel })}
-              />
+              <Toggle label="TUN" on={settings.tunnel} onClick={() => patch({ tunnel: !settings.tunnel })} />
               <Toggle
                 label="COR"
                 on={settings.wireframe}
                 onClick={() => patch({ wireframe: !settings.wireframe })}
               />
-              <Toggle
-                label="RNG"
-                on={settings.rings}
-                onClick={() => patch({ rings: !settings.rings })}
-              />
-              <Toggle
-                label="PTS"
-                on={settings.field}
-                onClick={() => patch({ field: !settings.field })}
-              />
-              <Toggle
-                label="LSR"
-                on={settings.laser}
-                onClick={() => patch({ laser: !settings.laser })}
-              />
+              <Toggle label="RNG" on={settings.rings} onClick={() => patch({ rings: !settings.rings })} />
+              <Toggle label="PTS" on={settings.field} onClick={() => patch({ field: !settings.field })} />
+              <Toggle label="LSR" on={settings.laser} onClick={() => patch({ laser: !settings.laser })} />
               <Toggle
                 label="STR"
                 on={settings.strobes}
                 onClick={() => patch({ strobes: !settings.strobes })}
               />
-              <Toggle
-                label="EQ"
-                on={settings.towers}
-                onClick={() => patch({ towers: !settings.towers })}
-              />
-              <Toggle
-                label="FLR"
-                on={settings.glow}
-                onClick={() => patch({ glow: !settings.glow })}
-              />
-              <Toggle
-                label="GLT"
-                on={settings.glitch}
-                onClick={() => patch({ glitch: !settings.glitch })}
-              />
+              <Toggle label="EQ" on={settings.towers} onClick={() => patch({ towers: !settings.towers })} />
+              <Toggle label="FLR" on={settings.glow} onClick={() => patch({ glow: !settings.glow })} />
+              <Toggle label="GLT" on={settings.glitch} onClick={() => patch({ glitch: !settings.glitch })} />
             </div>
           </div>
 
@@ -1245,14 +1420,9 @@ function HudInner({
       {/* ── recording frame ────────────────────────────────────────────── */}
       {recording ? (
         <div className="pointer-events-none absolute inset-0 z-20">
-          <div
-            className="absolute inset-0 border-2"
-            style={{ borderColor: "rgba(255,59,92,0.55)" }}
-          />
+          <div className="absolute inset-0 border-2" style={{ borderColor: "rgba(255,59,92,0.55)" }} />
           <div className="absolute top-3 left-1/2 -translate-x-1/2 border border-[#FF3B5C]/60 bg-black/60 px-3 py-1">
-            <span className="hud text-[9px] text-[#FF3B5C]">
-              ● REC {recordSeconds.toFixed(1)}S · 60FPS
-            </span>
+            <span className="hud text-[9px] text-[#FF3B5C]">● REC {recordSeconds.toFixed(1)}S · 60FPS</span>
           </div>
         </div>
       ) : null}
@@ -1266,16 +1436,14 @@ function HudInner({
             onClick={() => onDismiss(t.id)}
             className="panel rise pointer-events-auto border-l-2 p-3 text-left"
             style={{
-              borderLeftColor:
-                t.tone === "error" ? "#FF3B5C" : t.tone === "ok" ? "#00FF9C" : "var(--accent)",
+              borderLeftColor: t.tone === "error" ? "#FF3B5C" : t.tone === "ok" ? "#00FF9C" : "var(--accent)",
             }}
           >
             <div className="flex items-center gap-2">
               <span
                 className="block h-1.5 w-1.5"
                 style={{
-                  background:
-                    t.tone === "error" ? "#FF3B5C" : t.tone === "ok" ? "#00FF9C" : "var(--accent)",
+                  background: t.tone === "error" ? "#FF3B5C" : t.tone === "ok" ? "#00FF9C" : "var(--accent)",
                 }}
               />
               <span className="hud text-[10px] text-[#e9eef2]">{t.title}</span>

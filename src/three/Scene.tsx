@@ -28,7 +28,7 @@ const GammaShader = {
       vec3 col = max(vec3(0.0), inputColor.rgb);
       outputColor = vec4(pow(col, vec3(1.0 / max(0.01, uGamma))), inputColor.a);
     }
-  `
+  `,
 };
 
 class CustomGammaEffect extends Effect {
@@ -58,13 +58,17 @@ import {
   CORE_FRAG,
   CORE_VERT,
   GLOW_FRAG,
-  GLOW_VERT, VORTEX_VERT, VORTEX_FRAG,
+  GLOW_VERT,
+  VORTEX_VERT,
+  VORTEX_FRAG,
   GRID_VERT,
   GRID_FRAG,
   BACKDROP_VERT,
   BACKDROP_FRAG,
   LASER_FRAG,
-  LASER_VERT, RAY_VERT, RAY_FRAG,
+  LASER_VERT,
+  RAY_VERT,
+  RAY_FRAG,
   PARTICLE_FRAG,
   PARTICLE_VERT,
   RING_FRAG,
@@ -87,9 +91,11 @@ import {
 
 function paletteColors(index: number) {
   const p = PALETTES[index % PALETTES.length];
-  return p.hex.map(
-    (h) => new THREE.Color().setStyle(h, THREE.SRGBColorSpace),
-  ) as [THREE.Color, THREE.Color, THREE.Color];
+  return p.hex.map((h) => new THREE.Color().setStyle(h, THREE.SRGBColorSpace)) as [
+    THREE.Color,
+    THREE.Color,
+    THREE.Color,
+  ];
 }
 
 type AudioUniforms = Record<
@@ -144,7 +150,10 @@ function makeAudioUniforms(): AudioUniforms {
 
 const GLOBAL_COLS = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
 let CACHED_PALETTE = -1;
-let BASE_COLS = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
+const BASE_COLS = [new THREE.Color(), new THREE.Color(), new THREE.Color()];
+
+/** Uniform carrying palette metadata alongside its GPU value. */
+type UniformWithMeta = THREE.IUniform & { userData?: { brighten: number } };
 
 /** Writes the shared audio frame into any material that owns audio uniforms. */
 function pushAudio(u: Record<string, THREE.IUniform>, time: number) {
@@ -159,23 +168,20 @@ function pushAudio(u: Record<string, THREE.IUniform>, time: number) {
   if (u.uWarp) u.uWarp.value = s.mid * 1.0 + s.beat * 0.35;
   if (u.uBeatPhase) u.uBeatPhase.value = s.beatPhase;
   if (u.uMasterBeat) u.uMasterBeat.value = s.masterBeat;
-  
-  if (u.uColA && (u.uColA as any).userData) {
-    u.uColA.value.copy(GLOBAL_COLS[0]).multiplyScalar((u.uColA as any).userData.brighten);
-    u.uColB.value.copy(GLOBAL_COLS[1]).multiplyScalar((u.uColB as any).userData.brighten);
-    u.uColC.value.copy(GLOBAL_COLS[2]).multiplyScalar((u.uColC as any).userData.brighten);
+
+  const meta = (u.uColA as UniformWithMeta | undefined)?.userData;
+  if (u.uColA && meta) {
+    u.uColA.value.copy(GLOBAL_COLS[0]).multiplyScalar(meta.brighten);
+    u.uColB.value.copy(GLOBAL_COLS[1]).multiplyScalar(meta.brighten);
+    u.uColC.value.copy(GLOBAL_COLS[2]).multiplyScalar(meta.brighten);
   }
 }
 
-function applyPalette(
-  u: Record<string, THREE.IUniform>,
-  _index: number,
-  brighten = 1,
-) {
+function applyPalette(u: Record<string, THREE.IUniform>, _index: number, brighten = 1) {
   if (u.uColA) {
-    ((u.uColA as any).userData) = { brighten };
-    ((u.uColB as any).userData) = { brighten };
-    ((u.uColC as any).userData) = { brighten };
+    (u.uColA as UniformWithMeta).userData = { brighten };
+    (u.uColB as UniformWithMeta).userData = { brighten };
+    (u.uColC as UniformWithMeta).userData = { brighten };
   }
 }
 
@@ -242,7 +248,7 @@ function PerfProbe({ settings }: SceneProps) {
         if (audioState.beats % 32 === 0) perfBridge.onPhrase(audioState.beats);
       }
     }
-    
+
     // Animate global colors
     if (CACHED_PALETTE !== settings.palette) {
       CACHED_PALETTE = settings.palette;
@@ -412,7 +418,7 @@ function Tunnel({ settings }: SceneProps) {
         uniforms: {
           ...makeAudioUniforms(),
           uSteps: { value: QUALITY_PRESETS[settings.quality].marchSteps },
-          uTanHalfFov: { value: Math.tan((THREE.MathUtils.degToRad(70) * 0.5)) },
+          uTanHalfFov: { value: Math.tan(THREE.MathUtils.degToRad(70) * 0.5) },
           uAspect: { value: 1 },
           uCamPos: { value: new THREE.Vector3() },
           uCamMat: { value: new THREE.Matrix3() },
@@ -436,10 +442,13 @@ function Tunnel({ settings }: SceneProps) {
     applyPalette(material.uniforms, settings.palette);
   }, [material, settings.palette]);
 
-  useEffect(() => () => {
-    geometry.dispose();
-    material.dispose();
-  }, [geometry, material]);
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material],
+  );
 
   const camMat = useMemo(() => new THREE.Matrix3(), []);
 
@@ -458,14 +467,7 @@ function Tunnel({ settings }: SceneProps) {
 
   if (!settings.tunnel) return null;
 
-  return (
-    <mesh
-      geometry={geometry}
-      material={material}
-      frustumCulled={false}
-      renderOrder={-1000}
-    />
-  );
+  return <mesh geometry={geometry} material={material} frustumCulled={false} renderOrder={-1000} />;
 }
 
 /* ========================================================== PARTICLE FIELD */
@@ -502,9 +504,7 @@ function ParticleField({ settings }: SceneProps) {
       const ang = Math.random() * Math.PI * 2;
       // radial distribution: dense inner vortex + wide outer shell
       const t = Math.random();
-      const radius = inner
-        ? 0.7 + Math.pow(t, 1.6) * 2.7
-        : 3.7 + Math.pow(t, 0.55) * 8.5;
+      const radius = inner ? 0.7 + Math.pow(t, 1.6) * 2.7 : 3.7 + Math.pow(t, 0.55) * 8.5;
       positions[i3] = Math.cos(ang) * radius;
       positions[i3 + 1] = Math.sin(ang) * radius * (0.86 + Math.random() * 0.3);
       positions[i3 + 2] = Math.random() * SPAN;
@@ -592,37 +592,63 @@ function Core({ settings }: SceneProps) {
   const detail = settings.quality === "eco" ? 12 : settings.quality === "balanced" ? 20 : 32;
   const geometry = useMemo(() => {
     switch (settings.shape % 12) {
-      case 0: return new THREE.IcosahedronGeometry(1.55, detail);
-      case 1: return new THREE.TorusKnotGeometry(1.1, 0.35, detail * 4, detail);
-      case 2: return new THREE.SphereGeometry(1.45, detail * 2, detail * 2);
-      case 3: return new THREE.OctahedronGeometry(1.5, detail);
-      case 4: return new THREE.DodecahedronGeometry(1.4, detail);
-      case 5: return new THREE.TetrahedronGeometry(1.6, detail);
-      case 6: return new THREE.ConeGeometry(1.6, 3.2, 4); // Diamond / Pyramid
-      case 7: return new THREE.CylinderGeometry(1.6, 1.6, 3.2, 6); // Hexagonal Prism
-      case 8: return new THREE.TorusGeometry(1.6, 0.15, detail * 2, detail * 4); // Tech Ring
-      case 9: return new THREE.TorusKnotGeometry(1.5, 0.08, 256, 32, 3, 4); // Hyper Knot
-      case 10: return new THREE.IcosahedronGeometry(1.6, 1); // Faceted Sphere
-      case 11: return new THREE.OctahedronGeometry(1.6, 1); // Faceted Diamond
-      default: return new THREE.IcosahedronGeometry(1.55, detail);
+      case 0:
+        return new THREE.IcosahedronGeometry(1.55, detail);
+      case 1:
+        return new THREE.TorusKnotGeometry(1.1, 0.35, detail * 4, detail);
+      case 2:
+        return new THREE.SphereGeometry(1.45, detail * 2, detail * 2);
+      case 3:
+        return new THREE.OctahedronGeometry(1.5, detail);
+      case 4:
+        return new THREE.DodecahedronGeometry(1.4, detail);
+      case 5:
+        return new THREE.TetrahedronGeometry(1.6, detail);
+      case 6:
+        return new THREE.ConeGeometry(1.6, 3.2, 4); // Diamond / Pyramid
+      case 7:
+        return new THREE.CylinderGeometry(1.6, 1.6, 3.2, 6); // Hexagonal Prism
+      case 8:
+        return new THREE.TorusGeometry(1.6, 0.15, detail * 2, detail * 4); // Tech Ring
+      case 9:
+        return new THREE.TorusKnotGeometry(1.5, 0.08, 256, 32, 3, 4); // Hyper Knot
+      case 10:
+        return new THREE.IcosahedronGeometry(1.6, 1); // Faceted Sphere
+      case 11:
+        return new THREE.OctahedronGeometry(1.6, 1); // Faceted Diamond
+      default:
+        return new THREE.IcosahedronGeometry(1.55, detail);
     }
   }, [detail, settings.shape]);
-  
+
   const shell = useMemo(() => {
     switch (settings.shape % 12) {
-      case 0: return new THREE.IcosahedronGeometry(2.5, 2);
-      case 1: return new THREE.TorusKnotGeometry(1.8, 0.5, detail * 2, detail);
-      case 2: return new THREE.SphereGeometry(2.2, detail, detail);
-      case 3: return new THREE.OctahedronGeometry(2.4, 2);
-      case 4: return new THREE.DodecahedronGeometry(2.3, 2);
-      case 5: return new THREE.TetrahedronGeometry(2.5, 2);
-      case 6: return new THREE.ConeGeometry(2.4, 4.2, 4); // Diamond / Pyramid Shell
-      case 7: return new THREE.CylinderGeometry(2.2, 2.2, 4.2, 6); // Hexagonal Prism Shell
-      case 8: return new THREE.TorusGeometry(2.2, 0.25, detail, detail * 2); // Tech Ring Shell
-      case 9: return new THREE.TorusKnotGeometry(2.2, 0.15, 256, 32, 3, 4); // Hyper Knot Shell
-      case 10: return new THREE.IcosahedronGeometry(2.4, 1); // Faceted Sphere Shell
-      case 11: return new THREE.OctahedronGeometry(2.4, 1); // Faceted Diamond Shell
-      default: return new THREE.IcosahedronGeometry(2.5, 2);
+      case 0:
+        return new THREE.IcosahedronGeometry(2.5, 2);
+      case 1:
+        return new THREE.TorusKnotGeometry(1.8, 0.5, detail * 2, detail);
+      case 2:
+        return new THREE.SphereGeometry(2.2, detail, detail);
+      case 3:
+        return new THREE.OctahedronGeometry(2.4, 2);
+      case 4:
+        return new THREE.DodecahedronGeometry(2.3, 2);
+      case 5:
+        return new THREE.TetrahedronGeometry(2.5, 2);
+      case 6:
+        return new THREE.ConeGeometry(2.4, 4.2, 4); // Diamond / Pyramid Shell
+      case 7:
+        return new THREE.CylinderGeometry(2.2, 2.2, 4.2, 6); // Hexagonal Prism Shell
+      case 8:
+        return new THREE.TorusGeometry(2.2, 0.25, detail, detail * 2); // Tech Ring Shell
+      case 9:
+        return new THREE.TorusKnotGeometry(2.2, 0.15, 256, 32, 3, 4); // Hyper Knot Shell
+      case 10:
+        return new THREE.IcosahedronGeometry(2.4, 1); // Faceted Sphere Shell
+      case 11:
+        return new THREE.OctahedronGeometry(2.4, 1); // Faceted Diamond Shell
+      default:
+        return new THREE.IcosahedronGeometry(2.5, 2);
     }
   }, [detail, settings.shape]);
 
@@ -661,7 +687,7 @@ function Core({ settings }: SceneProps) {
     // Organic rotational inertia: velocity acceleration & damping
     const targetVelX = (0.05 + s.mid * 0.45) * settings.speed;
     const targetVelY = (0.08 + s.mid * 0.65 + s.beat * 0.35) * settings.speed;
-    const targetVelZ = (0.025 + s.high * 0.20) * settings.speed;
+    const targetVelZ = (0.025 + s.high * 0.2) * settings.speed;
 
     rotVel.current.x = lerp(rotVel.current.x, targetVelX, 1 - Math.pow(0.005, dt));
     rotVel.current.y = lerp(rotVel.current.y, targetVelY, 1 - Math.pow(0.005, dt));
@@ -673,12 +699,12 @@ function Core({ settings }: SceneProps) {
 
     if (group.current) {
       group.current.rotation.set(rot.current.x, rot.current.y, rot.current.z);
-      
+
       const targetScale = (1 + s.sub * 0.38 + s.beat * 0.16) * settings.coreSize;
       currentScale.current = lerp(currentScale.current, targetScale, 1 - Math.pow(0.0001, dt));
       group.current.scale.setScalar(currentScale.current);
-      
-      const levitate = Math.sin(s.time * 0.6) * 0.10 + Math.sin(s.time * 1.4) * 0.03;
+
+      const levitate = Math.sin(s.time * 0.6) * 0.1 + Math.sin(s.time * 1.4) * 0.03;
       group.current.position.y = levitate;
     }
   });
@@ -754,34 +780,37 @@ function StrobeRings({ settings }: SceneProps) {
 
 /* ============================================================= LASER FAN */
 
-
 function QuantumVortex({ settings }: SceneProps) {
   const COUNT = settings.quality === "eco" ? 5000 : 18000;
-  
-  const material = useMemo(() => new THREE.ShaderMaterial({
-    vertexShader: VORTEX_VERT,
-    fragmentShader: VORTEX_FRAG,
-    uniforms: makeAudioUniforms(),
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  }), []);
+
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: VORTEX_VERT,
+        fragmentShader: VORTEX_FRAG,
+        uniforms: makeAudioUniforms(),
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    [],
+  );
 
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(COUNT * 3);
     const rand = new Float32Array(COUNT);
-    for(let i=0; i<COUNT; i++) {
-       const r = Math.random() * 8.0 + 0.5;
-       const theta = Math.random() * Math.PI * 2;
-       const y = (Math.random() - 0.5) * 4.0;
-       pos[i*3] = r * Math.cos(theta);
-       pos[i*3+1] = y;
-       pos[i*3+2] = r * Math.sin(theta);
-       rand[i] = Math.random();
+    for (let i = 0; i < COUNT; i++) {
+      const r = Math.random() * 8.0 + 0.5;
+      const theta = Math.random() * Math.PI * 2;
+      const y = (Math.random() - 0.5) * 4.0;
+      pos[i * 3] = r * Math.cos(theta);
+      pos[i * 3 + 1] = y;
+      pos[i * 3 + 2] = r * Math.sin(theta);
+      rand[i] = Math.random();
     }
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aRand', new THREE.BufferAttribute(rand, 1));
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aRand", new THREE.BufferAttribute(rand, 1));
     return geo;
   }, [COUNT]);
 
@@ -789,7 +818,13 @@ function QuantumVortex({ settings }: SceneProps) {
     applyPalette(material.uniforms, settings.palette, 1.2);
   }, [material, settings.palette]);
 
-  useEffect(() => () => { geometry.dispose(); material.dispose(); }, [geometry, material]);
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material],
+  );
 
   useFrame(({ clock, pointer }) => {
     pushAudio(material.uniforms, clock.elapsedTime);
@@ -870,8 +905,6 @@ function LaserFan({ settings }: SceneProps) {
 
   return <primitive object={mesh} renderOrder={2} />;
 }
-
-
 
 /* ======================================================== ENERGY FLUX */
 
@@ -1136,13 +1169,13 @@ function CoreGlow({ settings }: SceneProps) {
 
   useFrame(({ clock, camera }) => {
     const t = clock.elapsedTime;
-    
+
     const corePos = new THREE.Vector3(0, 0, 0);
     corePos.project(camera);
     if (halo.uniforms.uScreenPos) {
       halo.uniforms.uScreenPos.value.set(corePos.x, corePos.y);
     }
-    
+
     pushAudio(halo.uniforms, t);
     pushAudio(shock.uniforms, t);
 
@@ -1168,13 +1201,7 @@ function CoreGlow({ settings }: SceneProps) {
   return (
     <group ref={group}>
       <mesh ref={haloMesh} geometry={quad} material={halo} frustumCulled={false} renderOrder={7} />
-      <mesh
-        ref={shockMesh}
-        geometry={ring}
-        material={shock}
-        frustumCulled={false}
-        renderOrder={8}
-      />
+      <mesh ref={shockMesh} geometry={ring} material={shock} frustumCulled={false} renderOrder={8} />
     </group>
   );
 }
@@ -1203,14 +1230,17 @@ function CameraRig({ settings }: SceneProps) {
     const t = clock.elapsedTime;
 
     // Detect massive RMS drop / transients (sub bass spike + beat impulse)
-    const isDrop = (s.level > 0.70 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
+    const isDrop = (s.level > 0.7 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
     if (isDrop) {
       dropPunch.current = Math.max(dropPunch.current, 22.0 * settings.intensity);
     }
     dropPunch.current = lerp(dropPunch.current, 0, 1 - Math.pow(0.003, dt));
 
     // transient-driven camera shake (sub-bass + beat impulse) with smooth exponential decay
-    shake.current = Math.max(shake.current * Math.pow(0.002, dt), (s.sub * s.sub * 1.3 + s.beat * 0.45) * settings.shake);
+    shake.current = Math.max(
+      shake.current * Math.pow(0.002, dt),
+      (s.sub * s.sub * 1.3 + s.beat * 0.45) * settings.shake,
+    );
     const amp = Math.min(shake.current * 0.28, 0.28) * (0.35 + settings.intensity * 0.45);
 
     // Smooth organic 3D drift (Lissajous path + sub-bass room recoil)
@@ -1218,7 +1248,7 @@ function CameraRig({ settings }: SceneProps) {
     target.set(
       base.x + Math.sin(t * 0.31) * drift + Math.cos(t * 0.67) * 0.05,
       base.y + Math.cos(t * 0.23) * drift * 0.7 + Math.sin(t * 0.53) * 0.04,
-      base.z - (s.sub * 0.18), // smooth sub-bass recoil for physical room feeling
+      base.z - s.sub * 0.18, // smooth sub-bass recoil for physical room feeling
     );
 
     // Damped interpolation for butter-smooth camera position tracking
@@ -1234,7 +1264,7 @@ function CameraRig({ settings }: SceneProps) {
     const roll = Math.sin(t * 0.19) * 0.045 + Math.sin(t * 0.09) * 0.02 + s.beat * 0.02 * Math.sin(t * 29.0);
     const pitch = Math.sin(t * 0.15) * 0.035 + s.beat * 0.015;
     const yaw = Math.sin(t * 0.12) * 0.04;
-    
+
     camera.rotation.z = lerp(camera.rotation.z, roll, 1 - Math.pow(0.0005, dt));
     camera.rotation.x = lerp(camera.rotation.x, pitch, 1 - Math.pow(0.0005, dt));
     camera.rotation.y = lerp(camera.rotation.y, yaw, 1 - Math.pow(0.0005, dt));
@@ -1273,7 +1303,7 @@ function Effects({ settings }: SceneProps) {
   const vignette = useRef<VignetteEffect>(null);
   const glitch = useRef<GlitchEffect>(null);
   const scan = useRef<ScanlineEffect>(null);
-  const gamma = useRef<any>(null);
+  const gamma = useRef<CustomGammaEffect | null>(null);
 
   const glitchLeft = useRef(0);
   const dropBloomFlash = useRef(1.0);
@@ -1305,7 +1335,7 @@ function Effects({ settings }: SceneProps) {
     if (tier > 0) return;
 
     // Detect massive RMS drop / transients (sub bass spike + beat impulse)
-    const isDrop = (s.level > 0.70 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
+    const isDrop = (s.level > 0.7 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
     if (isDrop) {
       dropBloomFlash.current = 3.0;
     }
@@ -1315,7 +1345,7 @@ function Effects({ settings }: SceneProps) {
     if (b) {
       let bIntensity, bThreshold, bSmoothing, bRadius;
       const userThresh = settings.bloomThreshold ?? 0.15;
-      
+
       if (settings.bloomProfile === "laser") {
         bIntensity = (0.8 + settings.bloom * 2.5) * (1.0 + s.high * 2.5 + s.beat * 1.5);
         bThreshold = Math.min(1.0, userThresh * 0.8 + 0.35 + s.level * 0.05);
@@ -1333,7 +1363,7 @@ function Effects({ settings }: SceneProps) {
         bSmoothing = 0.26 + s.level * 0.1;
         bRadius = 0.72 + s.sub * 0.24;
       }
-      
+
       b.intensity = bIntensity * dropBloomFlash.current;
       b.luminanceMaterial.threshold = bThreshold;
       b.luminanceMaterial.smoothing = bSmoothing;
@@ -1351,7 +1381,8 @@ function Effects({ settings }: SceneProps) {
     if (c) {
       const glitchMul = 1.0 + (settings.crystallineGlitch ?? 0) * 3.5;
       const crystalJitter = (settings.crystallineGlitch ?? 0) * 0.004 * (1.0 + s.high * 2.0);
-      const amt = (0.00045 + s.high * 0.0042 + s.beat * 0.0026 * settings.intensity) * glitchMul + crystalJitter;
+      const amt =
+        (0.00045 + s.high * 0.0042 + s.beat * 0.0026 * settings.intensity) * glitchMul + crystalJitter;
       (c.offset as THREE.Vector2).set(amt, amt * 0.82);
     }
 
@@ -1364,7 +1395,7 @@ function Effects({ settings }: SceneProps) {
     if (sc) {
       const op = 0.045 + s.high * 0.09;
       (sc as unknown as { blendMode: { opacity: { value: number } } }).blendMode.opacity.value = op;
-      const dens = (sc as unknown as { density?: number });
+      const dens = sc as unknown as { density?: number };
       if (typeof dens.density === "number") dens.density = 1.15;
     }
 
@@ -1403,7 +1434,9 @@ function Effects({ settings }: SceneProps) {
   const nodes: React.ReactElement[] = [
     <Bloom
       key="bloom"
-      ref={(r: any) => { bloom.current = r as any; }}
+      ref={(r: BloomEffect | null) => {
+        bloom.current = r;
+      }}
       intensity={1.2}
       luminanceThreshold={0.12}
       luminanceSmoothing={0.3}
@@ -1412,7 +1445,9 @@ function Effects({ settings }: SceneProps) {
     />,
     <CustomGamma
       key="gamma"
-      ref={(r: any) => { gamma.current = r as any; }}
+      ref={(r: CustomGammaEffect | null) => {
+        gamma.current = r;
+      }}
       gamma={settings.gamma}
     />,
   ];
@@ -1421,7 +1456,9 @@ function Effects({ settings }: SceneProps) {
     nodes.push(
       <ChromaticAberration
         key="chroma"
-        ref={(r: any) => { chroma.current = r as any; }}
+        ref={(r: ChromaticAberrationEffect | null) => {
+          chroma.current = r;
+        }}
         offset={new THREE.Vector2(0.0006, 0.0006)}
         radialModulation
         modulationOffset={0.36}
@@ -1433,18 +1470,46 @@ function Effects({ settings }: SceneProps) {
     nodes.push(
       <Glitch
         key="glitch"
-        ref={(r: any) => { glitch.current = r as any; }}
+        ref={(r: GlitchEffect | null) => {
+          glitch.current = r;
+        }}
         delay={new THREE.Vector2(1.2, 2.8)}
         duration={new THREE.Vector2(0.04, 0.18)}
         strength={new THREE.Vector2(0.04, 0.14)}
         ratio={0.85}
       />,
-      <Scanline key="scan" ref={(r: any) => { scan.current = r as any; }} blendFunction={BlendFunction.OVERLAY} density={1.15} opacity={0.06} />,
-      <Noise key="noise" ref={(r: any) => { noise.current = r as any; }} premultiply blendFunction={BlendFunction.ADD} opacity={0.04} />,
+      <Scanline
+        key="scan"
+        ref={(r: ScanlineEffect | null) => {
+          scan.current = r;
+        }}
+        blendFunction={BlendFunction.OVERLAY}
+        density={1.15}
+        opacity={0.06}
+      />,
+      <Noise
+        key="noise"
+        ref={(r: NoiseEffect | null) => {
+          noise.current = r;
+        }}
+        premultiply
+        blendFunction={BlendFunction.ADD}
+        opacity={0.04}
+      />,
     );
   }
 
-  nodes.push(<Vignette key="vignette" ref={(r: any) => { vignette.current = r as any; }} eskil={false} offset={0.26} darkness={0.78} />);
+  nodes.push(
+    <Vignette
+      key="vignette"
+      ref={(r: VignetteEffect | null) => {
+        vignette.current = r;
+      }}
+      eskil={false}
+      offset={0.26}
+      darkness={0.78}
+    />,
+  );
 
   return (
     <EffectComposer key={tier} multisampling={0} enableNormalPass={false} autoClear={false}>
@@ -1457,7 +1522,7 @@ function Effects({ settings }: SceneProps) {
 function FadePlane({ settings }: SceneProps) {
   const { camera } = useThree();
   const meshRef = useRef<THREE.Mesh>(null);
-  
+
   const material = useMemo(() => {
     const u = makeAudioUniforms();
     return new THREE.ShaderMaterial({
@@ -1486,21 +1551,24 @@ function FadePlane({ settings }: SceneProps) {
       <planeGeometry args={[100, 100]} />
       <primitive object={material} attach="material" />
     </mesh>,
-    camera
+    camera,
   );
 }
 
-
 function CyberGrid({ settings }: SceneProps) {
-  const material = useMemo(() => new THREE.ShaderMaterial({
-    vertexShader: GRID_VERT,
-    fragmentShader: GRID_FRAG,
-    uniforms: makeAudioUniforms(),
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide
-  }), []);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: GRID_VERT,
+        fragmentShader: GRID_FRAG,
+        uniforms: makeAudioUniforms(),
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
 
   useEffect(() => {
     applyPalette(material.uniforms, settings.palette, 1.0);
@@ -1520,10 +1588,9 @@ function CyberGrid({ settings }: SceneProps) {
   );
 }
 
-
 function GodRays({ settings }: SceneProps) {
   const meshRef = useRef<THREE.Mesh>(null);
-  
+
   const material = useMemo(() => {
     return new THREE.ShaderMaterial({
       vertexShader: RAY_VERT,
@@ -1532,7 +1599,7 @@ function GodRays({ settings }: SceneProps) {
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
     });
   }, []);
 
@@ -1603,7 +1670,10 @@ export default function Scene({ settings }: SceneProps) {
     const hex = PALETTES[settings.palette % PALETTES.length].hex[0];
     accentHex = hex;
     document.documentElement.style.setProperty("--accent", hex);
-    document.documentElement.style.setProperty("--accent-2", PALETTES[settings.palette % PALETTES.length].hex[1]);
+    document.documentElement.style.setProperty(
+      "--accent-2",
+      PALETTES[settings.palette % PALETTES.length].hex[1],
+    );
   }, [settings.palette]);
 
   return (
@@ -1712,7 +1782,9 @@ function QuantumPortal({ settings }: SceneProps) {
 
   if (!settings.quantumPortal) return null;
 
-  return <instancedMesh ref={imRef} args={[geometry, material, COUNT]} frustumCulled={false} renderOrder={4} />;
+  return (
+    <instancedMesh ref={imRef} args={[geometry, material, COUNT]} frustumCulled={false} renderOrder={4} />
+  );
 }
 
 /* ========================================================== NEURAL SYNAPSES */
@@ -1854,14 +1926,22 @@ function NeuralSynapses({ settings }: SceneProps) {
 
   if (!settings.neuralSynapses) return null;
 
-  return <lineSegments ref={lineRef} geometry={geometry} material={material} frustumCulled={false} renderOrder={5} />;
+  return (
+    <lineSegments
+      ref={lineRef}
+      geometry={geometry}
+      material={material}
+      frustumCulled={false}
+      renderOrder={5}
+    />
+  );
 }
 
 /* ========================================================== OBELISKS */
 
 function Obelisks({ settings }: SceneProps) {
   const COUNT = settings.quality === "eco" ? 12 : 36;
-  
+
   const material = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -1883,17 +1963,17 @@ function Obelisks({ settings }: SceneProps) {
     const geo = new THREE.CylinderGeometry(0.01, 0.25, 4.0, 4);
     const im = new THREE.InstancedMesh(geo, material, COUNT);
     im.frustumCulled = false;
-    
+
     const m = new THREE.Matrix4();
     const pos = new THREE.Vector3();
     const q = new THREE.Quaternion();
     const scale = new THREE.Vector3(1, 1, 1);
-    
+
     for (let i = 0; i < COUNT; i++) {
       const angle = (i / COUNT) * Math.PI * 2;
       const radius = 5.5 + (i % 3) * 1.5; // Staggered rings
       pos.set(Math.cos(angle) * radius, (Math.random() - 0.5) * 4.0, Math.sin(angle) * radius);
-      
+
       // Point them generally towards the center or randomly tilted
       q.setFromEuler(new THREE.Euler(Math.random() * 0.4 - 0.2, -angle, Math.random() * 0.4 - 0.2));
       m.compose(pos, q, scale);
@@ -1921,10 +2001,10 @@ function Obelisks({ settings }: SceneProps) {
     const dt = Math.min(delta, 1 / 20);
     pushAudio(material.uniforms, audioState.time);
     material.uniforms.uCamPos.value.copy(camera.position);
-    
+
     rot.current += dt * (0.05 + audioState.mid * 0.2) * settings.speed;
     mesh.rotation.y = rot.current;
-    
+
     // Pulse scale with bass
     const pulse = 1.0 + audioState.sub * 0.3;
     mesh.scale.set(pulse, pulse, pulse);

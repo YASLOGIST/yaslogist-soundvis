@@ -30,11 +30,7 @@ export function pickMime(): string | null {
 
 export function captureSupported(): boolean {
   const c = document.createElement("canvas");
-  return (
-    typeof MediaRecorder !== "undefined" &&
-    pickMime() !== null &&
-    typeof c.captureStream === "function"
-  );
+  return typeof MediaRecorder !== "undefined" && pickMime() !== null && typeof c.captureStream === "function";
 }
 
 export interface RecorderHandle {
