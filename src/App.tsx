@@ -2,6 +2,8 @@ import { Canvas } from "@react-three/fiber";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { engine, type AudioEngineError } from "./audio/AudioEngine";
+import { MidiManager, type MidiAction } from "./midi/MidiManager";
+import { openOutputWindow, type OutputHandle } from "./output/outputWindow";
 import {
   PALETTES,
   QUALITY_PRESETS,
@@ -173,7 +175,9 @@ const KEYS: [string, string][] = [
   ["1 – 9 / 0", `Palette recall (${PALETTES.length} looks)`],
   ["F1 – F8", "Recall look preset slot"],
   ["⇧ F1 – F8", "Store current look in slot"],
-  ["R", "Start / stop video capture"],
+  ["Z", "Toggle zen performance mode"],
+  ["S", "Toggle photosensitive SAFE mode"],
+  ["O", "Pop out the projector output window"],
   ["P", "Save a PNG still"],
   ["G", "Toggle glitch bursts"],
   ["A", "Toggle auto-performance"],
@@ -238,6 +242,10 @@ export default function App() {
 
   const idleTimer = useRef<number | null>(null);
   const recorder = useRef<RecorderHandle | null>(null);
+  const midi = useRef<MidiManager | null>(null);
+  const output = useRef<OutputHandle | null>(null);
+  const [midiStatus, setMidiStatus] = useState<string | null>(null);
+  const [outputOpen, setOutputOpen] = useState(false);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -322,6 +330,109 @@ export default function App() {
     setVolume(v);
     engine.setVolume(v);
   }, []);
+
+  /* ── Web MIDI live surface ───────────────────────────────────────────── */
+  const handleMidiAction = useCallback(
+    (action: MidiAction) => {
+      const current = settingsRef.current;
+      if (action === "paletteNext") {
+        patch({ palette: (current.palette + 1) % PALETTES.length });
+      } else if (action === "palettePrev") {
+        patch({ palette: (current.palette - 1 + PALETTES.length) % PALETTES.length });
+      } else if (action === "zenToggle") {
+        patch({ zenMode: !current.zenMode });
+      } else if (action === "safeToggle") {
+        patch({ safeMode: !current.safeMode });
+      } else if (typeof action === "object" && "presetSlot" in action) {
+        const preset = loadBank()[action.presetSlot];
+        if (preset) {
+          patch(applyLook(preset));
+          toast({ tone: "ok", title: `LOOK ${action.presetSlot + 1} RECALLED`, body: preset.name });
+        } else {
+          toast({
+            tone: "info",
+            title: `SLOT ${action.presetSlot + 1} EMPTY`,
+            body: "Store a look first (Shift-click the slot).",
+          });
+        }
+      }
+    },
+    [patch, toast],
+  );
+
+  const enableMidi = useCallback(() => {
+    if (midi.current) {
+      midi.current.stop();
+      midi.current = null;
+      setMidiStatus(null);
+      toast({ tone: "info", title: "MIDI DISABLED" });
+      return;
+    }
+    if (!MidiManager.supported) {
+      toast({
+        tone: "error",
+        title: "MIDI UNSUPPORTED",
+        body: "This browser has no Web MIDI API. Try Chrome or Edge.",
+      });
+      return;
+    }
+    const manager = new MidiManager();
+    void manager
+      .start({
+        onParam: (key, value) => patch({ [key]: value } as Partial<VisualSettings>),
+        onAction: handleMidiAction,
+        onStatus: (device) => {
+          setMidiStatus(device);
+          if (device) toast({ tone: "ok", title: "MIDI CONNECTED", body: device });
+        },
+      })
+      .then((ok) => {
+        if (ok) {
+          midi.current = manager;
+          setMidiStatus((prev) => prev ?? "scanning…");
+        } else {
+          toast({ tone: "error", title: "MIDI BLOCKED", body: "Access was refused by the browser." });
+        }
+      });
+  }, [patch, handleMidiAction, toast]);
+
+  /* ── pop-out projector window ────────────────────────────────────────── */
+  const toggleOutput = useCallback(() => {
+    if (output.current) {
+      output.current.close();
+      output.current = null;
+      setOutputOpen(false);
+      return;
+    }
+    const canvas = perfBridge.canvas;
+    if (!canvas) return;
+    const handle = openOutputWindow(canvas);
+    if (handle) {
+      output.current = handle;
+      setOutputOpen(true);
+      toast({
+        tone: "ok",
+        title: "OUTPUT MIRROR LIVE",
+        body: "Drag the new window to the projector and double-click it for fullscreen.",
+      });
+    } else {
+      toast({
+        tone: "error",
+        title: "POPUP BLOCKED",
+        body: "The browser refused the output window — allow popups for this page.",
+      });
+    }
+  }, [toast]);
+
+  useEffect(
+    () => () => {
+      output.current?.close();
+      output.current = null;
+      midi.current?.stop();
+      midi.current = null;
+    },
+    [],
+  );
 
   /* ── capture ─────────────────────────────────────────────────────────── */
   const handleSnapshot = useCallback(() => {
@@ -425,6 +536,8 @@ export default function App() {
   /* ── keyboard ────────────────────────────────────────────────────────── */
   const toggleRecordRef = useRef(handleToggleRecord);
   toggleRecordRef.current = handleToggleRecord;
+  const toggleOutputRef = useRef(toggleOutput);
+  toggleOutputRef.current = toggleOutput;
   const snapshotRef = useRef(handleSnapshot);
   snapshotRef.current = handleSnapshot;
 
@@ -481,6 +594,9 @@ export default function App() {
         case "p":
           snapshotRef.current();
           break;
+        case "o":
+          toggleOutputRef.current();
+          break;
         case "?":
           setHelp((v) => !v);
           break;
@@ -506,6 +622,12 @@ export default function App() {
           break;
         case "l":
           patch({ autoLook: !settingsRef.current.autoLook });
+          break;
+        case "z":
+          patch({ zenMode: !settingsRef.current.zenMode });
+          break;
+        case "s":
+          patch({ safeMode: !settingsRef.current.safeMode });
           break;
         case "arrowright":
           if (engine.transport) engine.seek(engine.transport.currentTime + 5);
@@ -653,6 +775,10 @@ export default function App() {
           captureReady={captureReady}
           onHelp={() => setHelp(true)}
           onToast={toast}
+          midiStatus={midiStatus}
+          onEnableMidi={enableMidi}
+          outputOpen={outputOpen}
+          onToggleOutput={toggleOutput}
         />
       ) : (
         <Boot busy={busy} onEnter={(m) => void startSource(m)} />

@@ -1,3 +1,4 @@
+import { advanceBeatClock, estimateBpm } from "./bpm";
 import { DemoSynth } from "./DemoSynth";
 import { audioState, clamp, lerp, resetAudioState, type InputMode } from "./state";
 
@@ -44,6 +45,10 @@ export class AudioEngine {
   private lastBeatAt = -1;
   private beatEnergy = 0;
   private adaptiveMax = 0.25;
+  /** Phase-continuous musical clock in beats — tempo changes never jump it. */
+  private beatClock = 0;
+  /** Last tempo estimate with confidence, for AUTO-BPM display. */
+  bpmConfidence = 0;
 
   private stream: MediaStream | null = null;
   private streamDest: MediaStreamAudioDestinationNode | null = null;
@@ -169,6 +174,8 @@ export class AudioEngine {
     this.disconnectSource();
     resetAudioState();
     this.beatTimes = [];
+    this.beatClock = 0;
+    this.bpmConfidence = 0;
     this.mode = mode;
 
     switch (mode) {
@@ -463,9 +470,9 @@ export class AudioEngine {
     audioState.level = clamp(rms * 2.6 * sens);
     audioState.time = elapsed;
     const activeBpm = audioState.bpm > 40 ? audioState.bpm : audioState.synthBpm || 132;
-    const totalBeats = (elapsed * activeBpm) / 60.0;
-    audioState.masterBeat = totalBeats;
-    audioState.beatPhase = totalBeats % 1.0;
+    this.beatClock = advanceBeatClock(this.beatClock, dt, activeBpm);
+    audioState.masterBeat = this.beatClock;
+    audioState.beatPhase = this.beatClock % 1.0;
 
     // spectrum mirror for the HUD (already 0..255)
     audioState.spectrum.set(this.freqData.subarray(0, audioState.spectrum.length));
@@ -492,16 +499,19 @@ export class AudioEngine {
       if (this.lastBeatAt > 0) {
         this.beatTimes.push(sinceLast);
         if (this.beatTimes.length > 16) this.beatTimes.shift();
-        const sorted = [...this.beatTimes].sort((x, y) => x - y);
-        const median = sorted[Math.floor(sorted.length / 2)];
-        if (median > 0.24 && median < 1.2) {
-          const target = clamp(60 / median, 60, 200);
-          audioState.bpm = audioState.bpm ? lerp(audioState.bpm, target, 0.25) : target;
+        const estimate = estimateBpm(this.beatTimes);
+        if (estimate) {
+          this.bpmConfidence = estimate.confidence;
+          // only steering when reasonably locked — avoids drunken tempo drift
+          if (estimate.confidence > 0.55) {
+            audioState.bpm = audioState.bpm ? lerp(audioState.bpm, estimate.bpm, 0.2) : estimate.bpm;
+          }
         }
       }
       this.lastBeatAt = now;
     } else if (sinceLast > 2.5) {
       audioState.bpm = lerp(audioState.bpm, 0, 0.05);
+      this.bpmConfidence = Math.max(0, this.bpmConfidence - dt * 0.5);
     }
 
     audioState.beat = Math.max(0, audioState.beat - dt * 2.9);

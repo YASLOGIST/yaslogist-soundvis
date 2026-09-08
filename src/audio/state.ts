@@ -307,7 +307,7 @@ export function safeStringify(value: unknown, fallback = "{}"): string {
 // QUALITY_KEYS removed as it's no longer used
 
 /** Inclusive [min, max] sanitisation range per numeric settings field. */
-const NUMERIC_RANGES: Record<string, [min: number, max: number]> = {
+export const SETTING_RANGES: Record<string, [min: number, max: number]> = {
   palette: [0, PALETTES.length - 1],
   sensitivity: [0.1, 3],
   bloom: [0, 2.5],
@@ -362,7 +362,7 @@ export function sanitizeSettings(raw: unknown): VisualSettings {
     if (typeof fallback === "number") {
       let next = typeof value === "number" && Number.isFinite(value) ? value : fallback;
       if (INTEGER_FIELDS.has(key)) next = Math.round(next);
-      const [min, max] = NUMERIC_RANGES[key] ?? [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY];
+      const [min, max] = SETTING_RANGES[key] ?? [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY];
       (out as unknown as Record<string, number>)[key] = Math.min(max, Math.max(min, next));
     } else if (typeof fallback === "boolean") {
       if (typeof value === "boolean") (out as unknown as Record<string, boolean>)[key] = value;
@@ -476,6 +476,8 @@ export interface VisualSettings {
   particleSize: number;
   /** adapt resolution / march steps / draw-range to hold 60 fps */
   autoPerf: boolean;
+  /** photosensitive safety limiter — caps strobe rate, flash depth and FOV punches */
+  safeMode: boolean;
   /** advance the palette once per 32-beat phrase */
   autoLook: boolean;
   /** circular FFT metering ring of glowing bars */
@@ -547,6 +549,7 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   towers: true,
   glow: true,
   autoPerf: true,
+  safeMode: false,
   autoLook: false,
 };
 

@@ -91,7 +91,26 @@ Everything is computed and rendered **100% client-side** in real-time — with *
 * **Portable presets**: export/import looks as `.json` files, or copy a **share link** that encodes the full look into the URL (`#look=…`) — perfect for trading looks with other performers.
 * All imported/shared data is sanitised through a hardened validator, so a hostile preset file can do nothing beyond… looking ugly.
 
-### 9. 🎹 Built-In Procedural 132 BPM Acid Techno Synthesizer
+### 9. 🛡️ Photosensitive SAFE Mode
+* A one-tap global flash limiter (`⚠ SAFE` toggle or <kbd>S</kbd>) engineered around photosensitivity guidance (~3 Hz flash ceiling).
+* Caps background strobe rate, clamps drop-driven bloom flares (3.0× → 1.25×), dampens camera FOV punches by 70%, and suppresses full-screen glitch bursts — the show keeps its character, the audience keeps their safety.
+
+### 10. 🧠 Auto-BPM Engine
+* Beat-interval tempo estimation with **octave folding** (half-time feels and hi-hat spam both resolve to the musical 70–180 BPM octave) and outlier-rejecting confidence scoring.
+* Confidence-gated steering (> 0.55) means sloppy live input can never drag the grid around drunkenly.
+* **Phase-continuous master clock**: the musical clock *integrates* tempo changes instead of recomputing from wall-time, so a shifting BPM accelerates the visuals smoothly — zero phase jumps, zero visual pops.
+
+### 11. 🎛️ Web MIDI Live Surface (zero-config)
+* Plug in any MIDI controller and hit `∘ MIDI` in the dock — no mapping editor required.
+* **CC 20–27 macro row**: bloom · crystalline glitch · speed · intensity · trails · particle size · core size · input sensitivity, each scaled through the same sanitised ranges as persisted settings.
+* **Pad row 36–47**: next/prev palette, zen toggle, SAFE toggle, and direct recall of the 8 look-preset slots.
+* Hot-plug aware (connect/disconnect mid-set), with a live device indicator right in the dock header.
+
+### 12. 🖥️ Pop-out Projector Window (dual-screen output)
+* `⧉ OUT` (or <kbd>O</kbd>) mirrors the WebGL canvas into a borderless secondary window via a 60 fps `captureStream` — one render, one GPU pipeline, near-zero cost.
+* Operator keeps the HUD, dock and analysis console on the laptop; the projector gets clean visuals. Click the output window for fullscreen, close it to end the mirror.
+
+### 13. 🎹 Built-In Procedural 132 BPM Acid Techno Synthesizer
 * Dual-oscillator pitched sub-bass kick drum, 303 resonant acid bassline, industrial 909-style closed/open hats, and analog noise sweep generator.
 * Live Tap-BPM tempo calculator and frequency profile EQ curve selector (*Smooth*, *Standard*, *Dynamic*, *Hyper*).
 
@@ -151,7 +170,8 @@ npm test              # Vitest — sanitizer + preset-system unit tests
 npm run build         # typecheck-gated single-file production bundle
 ```
 
-* `sanitizeSettings()` validates **every** persisted/imported field against a declarative spec (ranges, enums, integer fields, type matching) — corrupted `localStorage` or malicious preset files can never crash the render loop.
+* `sanitizeSettings()` validates **every** persisted/imported field against a declarative spec (ranges, enums, integer fields, type matching) — corrupted `localStorage` or malicious preset files can never crash the render loop. The same spec powers the Web MIDI macro scaling.
+* 65 Vitest unit tests cover the settings pipeline, look-preset transport, tempo estimator, MIDI mapping tables and the photosensitivity limiter math.
 * Existing users are migrated transparently from the legacy `void-reactor.settings.v1` storage key.
 
 ---
@@ -163,6 +183,8 @@ npm run build         # typecheck-gated single-file production bundle
 | <kbd>SPACE</kbd> | Toggle Play / Pause Audio Source |
 | <kbd>H</kbd> | Toggle HUD Interface Visibility |
 | <kbd>Z</kbd> | Toggle Zen Performance Mode |
+| <kbd>S</kbd> | Toggle Photosensitive SAFE Mode |
+| <kbd>O</kbd> | Pop Out / Close Projector Output Window |
 | <kbd>F</kbd> | Toggle Fullscreen Mode |
 | <kbd>1</kbd> – <kbd>9</kbd> / <kbd>0</kbd> | Quick-Select Palette (first 10 of 20) |
 | <kbd>F1</kbd> – <kbd>F8</kbd> | Recall Look Preset Slot 1–8 |

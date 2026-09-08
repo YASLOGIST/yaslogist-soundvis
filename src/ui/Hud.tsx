@@ -11,6 +11,7 @@ import {
   type QualityLevel,
   type VisualSettings,
 } from "../audio/state";
+import { MidiManager } from "../midi/MidiManager";
 import {
   PRESET_SLOTS,
   applyLook,
@@ -53,6 +54,11 @@ interface HudProps {
   captureReady: boolean;
   onHelp: () => void;
   onToast: (t: Omit<Toast, "id">) => void;
+  /** Connected MIDI controller name, "scanning...", or null when disabled. */
+  midiStatus: string | null;
+  onEnableMidi: () => void;
+  outputOpen: boolean;
+  onToggleOutput: () => void;
 }
 
 /* ── small building blocks ──────────────────────────────────────────────── */
@@ -110,9 +116,25 @@ function Slider({
   );
 }
 
-function Toggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+function Toggle({
+  label,
+  on,
+  onClick,
+  title,
+}: {
+  label: string;
+  on: boolean;
+  onClick: () => void;
+  title?: string;
+}) {
   return (
-    <button type="button" onClick={onClick} data-active={on} className="btn hud px-2 py-[5px] text-[9px]">
+    <button
+      type="button"
+      onClick={onClick}
+      data-active={on}
+      title={title}
+      className="btn hud px-2 py-[5px] text-[9px]"
+    >
       {label}
     </button>
   );
@@ -360,6 +382,10 @@ function HudInner({
   captureReady,
   onHelp,
   onToast,
+  midiStatus,
+  onEnableMidi,
+  outputOpen,
+  onToggleOutput,
 }: HudProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const presetInput = useRef<HTMLInputElement>(null);
@@ -681,6 +707,15 @@ function HudInner({
             </button>
             <button
               type="button"
+              onClick={onToggleOutput}
+              data-active={outputOpen}
+              className="btn hud panel px-2.5 py-[7px]"
+              title="Pop out the projector output window (O)"
+            >
+              ⧉ OUT
+            </button>
+            <button
+              type="button"
               onClick={() => setDockOpen(!dockOpen)}
               data-active={dockOpen}
               className="btn hud panel px-2.5 py-[7px]"
@@ -809,6 +844,21 @@ function HudInner({
             <div className="flex items-center gap-1">
               <button
                 type="button"
+                onClick={onEnableMidi}
+                data-active={!!midiStatus}
+                className="btn hud px-2 py-[3px] text-[8.5px]"
+                title={
+                  MidiManager.supported
+                    ? "Attach a MIDI controller (CC 20-27 = macros, pads 36-47 = actions)"
+                    : "Web MIDI is not supported in this browser"
+                }
+              >
+                {midiStatus
+                  ? "● MIDI" + (midiStatus !== "scanning…" ? `: ${midiStatus.slice(0, 10)}` : "")
+                  : "∘ MIDI"}
+              </button>
+              <button
+                type="button"
                 onClick={randomizeScene}
                 className="btn hud px-2 py-[3px] text-[8.5px] !text-[#00F0FF] border border-[#00F0FF]/40 bg-[#00F0FF]/15 hover:bg-[#00F0FF]/35 active:scale-95 transition-transform"
                 title="Randomize scene aesthetics"
@@ -852,6 +902,12 @@ function HudInner({
                 label="AUTO-LOOK"
                 on={settings.autoLook}
                 onClick={() => patch({ autoLook: !settings.autoLook })}
+              />
+              <Toggle
+                label="⚠ SAFE"
+                on={settings.safeMode}
+                onClick={() => patch({ safeMode: !settings.safeMode })}
+                title="Photosensitive safety limiter - caps strobe, flashes and punches (S)"
               />
             </div>
           </div>

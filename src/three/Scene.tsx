@@ -20,6 +20,7 @@ import {
   type ScanlineEffect,
   type VignetteEffect,
 } from "postprocessing";
+import { limitFlash, limitPunch, limitStrobeRate } from "./safety";
 
 const GammaShader = {
   fragmentShader: /* glsl */ `
@@ -1232,7 +1233,10 @@ function CameraRig({ settings }: SceneProps) {
     // Detect massive RMS drop / transients (sub bass spike + beat impulse)
     const isDrop = (s.level > 0.7 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
     if (isDrop) {
-      dropPunch.current = Math.max(dropPunch.current, 22.0 * settings.intensity);
+      dropPunch.current = Math.max(
+        dropPunch.current,
+        limitPunch(22.0 * settings.intensity, settings.safeMode),
+      );
     }
     dropPunch.current = lerp(dropPunch.current, 0, 1 - Math.pow(0.003, dt));
 
@@ -1337,7 +1341,7 @@ function Effects({ settings }: SceneProps) {
     // Detect massive RMS drop / transients (sub bass spike + beat impulse)
     const isDrop = (s.level > 0.7 && s.sub > 0.65 && s.beat > 0.75) || (s.sub > 0.85 && s.beat > 0.6);
     if (isDrop) {
-      dropBloomFlash.current = 3.0;
+      dropBloomFlash.current = limitFlash(3.0, settings.safeMode);
     }
     dropBloomFlash.current = lerp(dropBloomFlash.current, 1.0, 1 - Math.pow(0.006, dt));
 
@@ -1411,7 +1415,7 @@ function Effects({ settings }: SceneProps) {
       if (!settings.glitch) {
         g.mode = GlitchMode.DISABLED;
       } else {
-        if (s.beat > 0.92 && s.sub > 0.42 && glitchLeft.current <= 0) {
+        if (!settings.safeMode && s.beat > 0.92 && s.sub > 0.42 && glitchLeft.current <= 0) {
           glitchLeft.current = 0.14 + Math.random() * 0.12;
         }
         if (glitchLeft.current > 0) {
@@ -1543,7 +1547,7 @@ function FadePlane({ settings }: SceneProps) {
     pushAudio(material.uniforms, clock.elapsedTime);
     material.uniforms.uOpacity.value = 1.0 - settings.trails;
     material.uniforms.uStrobeMode.value = settings.strobeMode ? 1.0 : 0.0;
-    material.uniforms.uStrobeSpeed.value = settings.strobeSpeed;
+    material.uniforms.uStrobeSpeed.value = limitStrobeRate(settings.strobeSpeed, settings.safeMode);
   });
 
   return createPortal(
