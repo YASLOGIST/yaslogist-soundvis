@@ -68,9 +68,11 @@ export class FaultBoundary extends Component<Props, State> {
   /** Soft faults keep the last frame alive — the operator can just carry on. */
   private dismiss = () => {
     if (framesDropped()) {
-      raiseFault(
-        { title: "FROZEN", message: "The render loop is frozen until the engine is remounted.", fatal: false },
-      );
+      raiseFault({
+        title: "FROZEN",
+        message: "The render loop is frozen until the engine is remounted.",
+        fatal: false,
+      });
       return;
     }
     this.setState({ fault: null });
@@ -84,15 +86,18 @@ export class FaultBoundary extends Component<Props, State> {
       <div className="absolute inset-0 z-[60] grid place-items-center bg-[#050505]/88 px-6 backdrop-blur-md">
         <div className="panel bracket w-full max-w-[540px] p-6">
           <div className="flex items-center gap-2">
-            <span className="block h-2 w-2" style={{ background: "#FF3B5C", boxShadow: "0 0 12px #FF3B5C" }} />
+            <span
+              className="block h-2 w-2"
+              style={{ background: "#FF3B5C", boxShadow: "0 0 12px #FF3B5C" }}
+            />
             <span className="hud text-[10px] text-[#FF3B5C]">{fault.title}</span>
           </div>
           <h2 className="mt-3 text-[19px] font-bold tracking-[0.14em] text-[#e9eef2]">
             VISUAL ENGINE HALTED
           </h2>
           <p className="mt-2 text-[11px] leading-relaxed text-[#8b98a1] normal-case">
-            The GPU pipeline threw an exception. Audio is untouched — remount the visual engine to
-            continue, or reload for a clean session.
+            The GPU pipeline threw an exception. Audio is untouched — remount the visual engine to continue,
+            or reload for a clean session.
           </p>
           <pre className="no-scrollbar mt-3 max-h-28 overflow-auto border border-white/10 bg-black/60 p-2 text-[9px] leading-4 whitespace-pre-wrap text-[#6d7a84]">
             {fault.message}

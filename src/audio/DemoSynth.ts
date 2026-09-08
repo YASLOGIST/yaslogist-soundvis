@@ -25,11 +25,11 @@ export class DemoSynth {
   private nextNoteTime = 0;
   private step = 0;
   private bpm = 132;
-  
+
   setBPM(bpm: number) {
     this.bpm = Math.max(60, Math.min(200, bpm));
   }
-  
+
   getBPM() {
     return this.bpm;
   }
@@ -85,9 +85,7 @@ export class DemoSynth {
   }
 
   /** Minor pentatonic-ish acid line, 16 steps per bar. */
-  private static PATTERN = [
-    0, -1, 12, 0, 7, -1, 3, 5, 0, 12, -1, 7, 10, -1, 3, 0,
-  ];
+  private static PATTERN = [0, -1, 12, 0, 7, -1, 3, 5, 0, 12, -1, 7, 10, -1, 3, 0];
 
   start() {
     if (this.running_) return;
@@ -164,7 +162,7 @@ export class DemoSynth {
     if (note >= 0) {
       const accent = s16 % 4 === 0 ? 1 : 0.72;
       const freq = 55 * Math.pow(2, note / 12);
-      this.acid(t, freq, accent, (s16 % 8) > 5);
+      this.acid(t, freq, accent, s16 % 8 > 5);
     }
 
     // chord stab every 2 bars

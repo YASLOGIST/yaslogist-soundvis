@@ -92,7 +92,10 @@ export function safeStringify(value: unknown, fallback = "{}"): string {
   try {
     const out = JSON.stringify(value, (_key, val) =>
       // strip non-serialisable / cyclic branches instead of exploding
-      typeof val === "object" && val !== null && !Array.isArray(val) && Object.getPrototypeOf(val) !== Object.prototype
+      typeof val === "object" &&
+      val !== null &&
+      !Array.isArray(val) &&
+      Object.getPrototypeOf(val) !== Object.prototype
         ? `[${val.constructor?.name ?? "object"}]`
         : val,
     );
@@ -154,10 +157,9 @@ export function installFaultTraps(): () => void {
         };
         // Give the pipeline a chance to self-heal (degrade FX, drop a layer)
         // before freezing the frame and surfacing the halt overlay.
-        let handled = false;
+        let handled: boolean;
         try {
-          const outcome = renderSink ? renderSink(fault) : false;
-          handled = outcome === true;
+          handled = renderSink ? renderSink(fault) === true : false;
         } catch {
           handled = false;
         }

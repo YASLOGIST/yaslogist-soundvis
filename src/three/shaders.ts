@@ -1142,7 +1142,6 @@ void main() {
 }
 `;
 
-
 export const RAY_VERT = `
 varying vec2 vUv;
 void main() {
@@ -1260,4 +1259,3 @@ void main() {
   gl_FragColor = vec4(col, alpha);
 }
 `;
-

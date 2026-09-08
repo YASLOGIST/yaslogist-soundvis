@@ -191,36 +191,98 @@ export const LOOK_PRESETS: { id: string; name: string; patch: Partial<VisualSett
   {
     id: "peak",
     name: "PEAK-TIME",
-    patch: { palette: 0, bloom: 1.5, intensity: 1.15, glitch: true, tunnel: true, field: true, strobes: true, towers: true, glow: true },
+    patch: {
+      palette: 0,
+      bloom: 1.5,
+      intensity: 1.15,
+      glitch: true,
+      tunnel: true,
+      field: true,
+      strobes: true,
+      towers: true,
+      glow: true,
+    },
   },
   {
     id: "warehouse",
     name: "WAREHOUSE",
-    patch: { palette: 3, bloom: 0.95, intensity: 0.7, glitch: true, tunnel: true, field: true, strobes: true, towers: true, glow: false },
+    patch: {
+      palette: 3,
+      bloom: 0.95,
+      intensity: 0.7,
+      glitch: true,
+      tunnel: true,
+      field: true,
+      strobes: true,
+      towers: true,
+      glow: false,
+    },
   },
   {
     id: "acid",
     name: "ACID ROOM",
-    patch: { palette: 1, bloom: 1.75, intensity: 1.4, glitch: false, tunnel: true, field: true, strobes: true, towers: true, glow: true },
+    patch: {
+      palette: 1,
+      bloom: 1.75,
+      intensity: 1.4,
+      glitch: false,
+      tunnel: true,
+      field: true,
+      strobes: true,
+      towers: true,
+      glow: true,
+    },
   },
   {
     id: "after",
     name: "AFTERGLOW",
-    patch: { palette: 2, bloom: 2.1, intensity: 0.55, glitch: false, tunnel: true, field: true, strobes: false, towers: false, glow: true },
+    patch: {
+      palette: 2,
+      bloom: 2.1,
+      intensity: 0.55,
+      glitch: false,
+      tunnel: true,
+      field: true,
+      strobes: false,
+      towers: false,
+      glow: true,
+    },
   },
   {
     id: "reactor",
     name: "REACTOR",
-    patch: { palette: 4, bloom: 1.65, intensity: 1.3, glitch: true, tunnel: true, field: true, strobes: true, towers: true, glow: true },
+    patch: {
+      palette: 4,
+      bloom: 1.65,
+      intensity: 1.3,
+      glitch: true,
+      tunnel: true,
+      field: true,
+      strobes: true,
+      towers: true,
+      glow: true,
+    },
   },
   {
     id: "ice",
     name: "CRYO",
-    patch: { palette: 8, bloom: 1.8, intensity: 0.9, glitch: false, tunnel: true, field: true, strobes: true, towers: false, glow: true },
+    patch: {
+      palette: 8,
+      bloom: 1.8,
+      intensity: 0.9,
+      glitch: false,
+      tunnel: true,
+      field: true,
+      strobes: true,
+      towers: false,
+      glow: true,
+    },
   },
 ];
 
-export const SETTINGS_KEY = "void-reactor.settings.v1";
+export const SETTINGS_KEY = "yaslogist.settings.v1";
+/** Pre-rebrand storage key — migrated transparently on load. */
+const LEGACY_SETTINGS_KEY = "void-reactor.settings.v1";
 
 /**
  * Fault-tolerant JSON serialisation. Cyclic structures (WebGL objects, DOM
@@ -244,43 +306,92 @@ export function safeStringify(value: unknown, fallback = "{}"): string {
 
 // QUALITY_KEYS removed as it's no longer used
 
+/** Inclusive [min, max] sanitisation range per numeric settings field. */
+export const SETTING_RANGES: Record<string, [min: number, max: number]> = {
+  palette: [0, PALETTES.length - 1],
+  sensitivity: [0.1, 3],
+  bloom: [0, 2.5],
+  bloomThreshold: [0, 1],
+  gamma: [0.5, 3],
+  uiContrast: [0.2, 1],
+  crystallineGlitch: [0, 3],
+  intensity: [0, 1.5],
+  trails: [0, 0.99],
+  particleSize: [0.1, 5],
+  strobeSpeed: [5, 60],
+  softening: [0, 1],
+  shake: [0, 3],
+  speed: [0.1, 3],
+  fov: [50, 130],
+  aberration: [0, 3],
+  flux: [0, 3],
+  coreSize: [0.5, 2.5],
+  colorShift: [0, 2],
+  noiseLevel: [0, 3],
+  shape: [0, 11],
+  particles: [
+    Math.min(...Object.values(QUALITY_PRESETS).map((q) => q.particles)),
+    Math.max(...Object.values(QUALITY_PRESETS).map((q) => q.particles)),
+  ],
+};
+
+/** Numeric fields that must land on whole numbers. */
+const INTEGER_FIELDS: ReadonlySet<string> = new Set(["palette", "shape", "particles"]);
+
+/** Allowed values per enum settings field. */
+const ENUM_VALUES: Record<string, readonly string[]> = {
+  quality: Object.keys(QUALITY_PRESETS),
+  audioProfile: ["smooth", "standard", "dynamic", "hyper"],
+  bloomProfile: ["soft", "hard", "laser"],
+};
+
+/**
+ * Coerce arbitrary input (corrupted localStorage, imported JSON, shared links)
+ * into a fully valid `VisualSettings`. Every field is validated against its
+ * declarative spec — unknown keys are dropped, bad values fall back to
+ * defaults, numbers are clamped to their documented ranges.
+ */
+export function sanitizeSettings(raw: unknown): VisualSettings {
+  const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out: VisualSettings = { ...DEFAULT_SETTINGS };
+
+  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof VisualSettings)[]) {
+    const value = src[key];
+    const fallback = DEFAULT_SETTINGS[key];
+
+    if (typeof fallback === "number") {
+      let next = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+      if (INTEGER_FIELDS.has(key)) next = Math.round(next);
+      const [min, max] = SETTING_RANGES[key] ?? [Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY];
+      (out as unknown as Record<string, number>)[key] = Math.min(max, Math.max(min, next));
+    } else if (typeof fallback === "boolean") {
+      if (typeof value === "boolean") (out as unknown as Record<string, boolean>)[key] = value;
+    } else {
+      const allowed = ENUM_VALUES[key];
+      if (allowed && typeof value === "string" && allowed.includes(value)) {
+        (out as unknown as Record<string, string>)[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
 export function loadSettings(): VisualSettings {
-  const fallback = DEFAULT_SETTINGS;
   try {
-    const saved = localStorage.getItem(SETTINGS_KEY);
-    if (!saved) return fallback;
-    const parsed = JSON.parse(saved);
-    const merged = { ...fallback, ...parsed };
-    // sanitize
-    merged.palette = Math.max(0, Math.round(merged.palette ?? fallback.palette));
-    merged.sensitivity = Math.min(3, Math.max(0.1, merged.sensitivity ?? fallback.sensitivity));
-    merged.bloom = Math.min(2.5, Math.max(0, merged.bloom ?? fallback.bloom));
-    merged.bloomThreshold = Math.min(1.0, Math.max(0.0, merged.bloomThreshold ?? fallback.bloomThreshold));
-    merged.gamma = Math.min(3.0, Math.max(0.5, merged.gamma ?? fallback.gamma));
-    merged.uiContrast = Math.min(1.0, Math.max(0.2, merged.uiContrast ?? fallback.uiContrast));
-    if (typeof merged.masterClock !== "boolean") merged.masterClock = fallback.masterClock;
-    merged.crystallineGlitch = Math.min(3.0, Math.max(0.0, merged.crystallineGlitch ?? fallback.crystallineGlitch));
-    if (typeof merged.quantumPortal !== "boolean") merged.quantumPortal = fallback.quantumPortal;
-    if (typeof merged.neuralSynapses !== "boolean") merged.neuralSynapses = fallback.neuralSynapses;
-    merged.intensity = Math.min(1.5, Math.max(0, merged.intensity ?? fallback.intensity));
-    merged.trails = Math.min(0.99, Math.max(0, merged.trails ?? fallback.trails));
-    merged.particleSize = Math.min(5.0, Math.max(0.1, merged.particleSize ?? fallback.particleSize));
-    merged.strobeSpeed = Math.min(60.0, Math.max(5.0, merged.strobeSpeed ?? fallback.strobeSpeed));
-    merged.softening = Math.min(1.0, Math.max(0.0, merged.softening ?? fallback.softening));
-    merged.shake = Math.min(3, Math.max(0, merged.shake ?? fallback.shake));
-    merged.speed = Math.min(3, Math.max(0.1, merged.speed ?? fallback.speed));
-    merged.fov = Math.min(130, Math.max(50, merged.fov ?? fallback.fov));
-    merged.aberration = Math.min(3, Math.max(0, merged.aberration ?? fallback.aberration));
-    merged.flux = Math.min(3, Math.max(0, merged.flux ?? fallback.flux));
-    merged.coreSize = Math.min(2.5, Math.max(0.5, merged.coreSize ?? fallback.coreSize));
-    merged.colorShift = Math.min(2, Math.max(0, merged.colorShift ?? fallback.colorShift));
-    merged.noiseLevel = Math.min(3, Math.max(0, merged.noiseLevel ?? fallback.noiseLevel));
-    merged.shape = Math.min(11, Math.max(0, Math.round(merged.shape ?? fallback.shape)));
-    if (!["smooth", "standard", "dynamic", "hyper"].includes(merged.audioProfile)) merged.audioProfile = fallback.audioProfile;
-    if (typeof merged.autoHideUi !== "boolean") merged.autoHideUi = fallback.autoHideUi;
-    return merged;
+    let saved = localStorage.getItem(SETTINGS_KEY);
+    if (saved === null) {
+      // one-time migration from the pre-rebrand key
+      const legacy = localStorage.getItem(LEGACY_SETTINGS_KEY);
+      if (legacy !== null) {
+        localStorage.setItem(SETTINGS_KEY, legacy);
+        localStorage.removeItem(LEGACY_SETTINGS_KEY);
+        saved = legacy;
+      }
+    }
+    if (!saved) return { ...DEFAULT_SETTINGS };
+    return sanitizeSettings(JSON.parse(saved));
   } catch {
-    return fallback;
+    return { ...DEFAULT_SETTINGS };
   }
 }
 
@@ -365,6 +476,8 @@ export interface VisualSettings {
   particleSize: number;
   /** adapt resolution / march steps / draw-range to hold 60 fps */
   autoPerf: boolean;
+  /** photosensitive safety limiter — caps strobe rate, flash depth and FOV punches */
+  safeMode: boolean;
   /** advance the palette once per 32-beat phrase */
   autoLook: boolean;
   /** circular FFT metering ring of glowing bars */
@@ -402,7 +515,7 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   intensity: 1.0,
   trails: 0.15,
   shake: 1.0,
-  speed: 0.70,
+  speed: 0.7,
   fov: 74,
   aberration: 1,
   flux: 1,
@@ -436,6 +549,7 @@ export const DEFAULT_SETTINGS: VisualSettings = {
   towers: true,
   glow: true,
   autoPerf: true,
+  safeMode: false,
   autoLook: false,
 };
 

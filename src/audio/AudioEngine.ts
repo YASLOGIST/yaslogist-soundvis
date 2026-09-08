@@ -1,3 +1,4 @@
+import { advanceBeatClock, estimateBpm } from "./bpm";
 import { DemoSynth } from "./DemoSynth";
 import { audioState, clamp, lerp, resetAudioState, type InputMode } from "./state";
 
@@ -14,8 +15,8 @@ export interface AudioEngineError {
   message: string;
 }
 
-const FFT_SIZE = 1024;          // as specified → 512 frequency bins
-const SMOOTHING = 0.82;         // as specified
+const FFT_SIZE = 1024; // as specified → 512 frequency bins
+const SMOOTHING = 0.82; // as specified
 
 // Band edges in Hz. Resolution = sampleRate / fftSize (≈46.9 Hz @ 48 kHz).
 const BANDS = {
@@ -44,6 +45,10 @@ export class AudioEngine {
   private lastBeatAt = -1;
   private beatEnergy = 0;
   private adaptiveMax = 0.25;
+  /** Phase-continuous musical clock in beats — tempo changes never jump it. */
+  private beatClock = 0;
+  /** Last tempo estimate with confidence, for AUTO-BPM display. */
+  bpmConfidence = 0;
 
   private stream: MediaStream | null = null;
   private streamDest: MediaStreamAudioDestinationNode | null = null;
@@ -169,6 +174,8 @@ export class AudioEngine {
     this.disconnectSource();
     resetAudioState();
     this.beatTimes = [];
+    this.beatClock = 0;
+    this.bpmConfidence = 0;
     this.mode = mode;
 
     switch (mode) {
@@ -369,7 +376,11 @@ export class AudioEngine {
     return weight > 0 ? Math.sqrt(sum / weight) : 0;
   }
 
-  update(dt: number, elapsed: number, profile: "smooth" | "standard" | "dynamic" | "hyper" = "dynamic"): void {
+  update(
+    dt: number,
+    elapsed: number,
+    profile: "smooth" | "standard" | "dynamic" | "hyper" = "dynamic",
+  ): void {
     // apply smooth beat decay
     if (audioState.beat > 0) {
       audioState.beat = Math.max(0, audioState.beat - dt * 4.5);
@@ -385,7 +396,7 @@ export class AudioEngine {
     this.analyser.getFloatFrequencyData(this.floatFreq);
     this.analyser.getFloatTimeDomainData(this.timeData);
 
-    let wf = audioState.waveform;
+    const wf = audioState.waveform;
     let rms = 0;
     const stride = Math.max(1, Math.floor(this.timeData.length / wf.length));
     for (let i = 0; i < wf.length; i++) {
@@ -399,7 +410,11 @@ export class AudioEngine {
     const targetMax = Math.max(0.035, rms * (profile === "hyper" ? 4.5 : profile === "smooth" ? 2.5 : 3.5));
     const agcRelease = profile === "hyper" ? 0.003 : profile === "smooth" ? 0.001 : 0.0015;
     const agcAttack = profile === "hyper" ? 0.15 : profile === "smooth" ? 0.04 : 0.08;
-    this.adaptiveMax = lerp(this.adaptiveMax, targetMax, targetMax < this.adaptiveMax ? agcAttack : agcRelease);
+    this.adaptiveMax = lerp(
+      this.adaptiveMax,
+      targetMax,
+      targetMax < this.adaptiveMax ? agcAttack : agcRelease,
+    );
 
     const sens = audioState.sensitivity * (profile === "hyper" ? 1.4 : profile === "smooth" ? 1.1 : 1.25);
     const raw: Record<BandKey, number> = {
@@ -412,17 +427,18 @@ export class AudioEngine {
     // per-band attack / release envelopes based on profile
     let attack: Record<BandKey, number>;
     let release: Record<BandKey, number>;
-    
+
     if (profile === "smooth") {
-      attack = { sub: 0.25, bass: 0.20, mid: 0.15, high: 0.25 };
+      attack = { sub: 0.25, bass: 0.2, mid: 0.15, high: 0.25 };
       release = { sub: 0.05, bass: 0.04, mid: 0.03, high: 0.03 };
     } else if (profile === "hyper") {
       attack = { sub: 0.85, bass: 0.75, mid: 0.65, high: 0.85 };
-      release = { sub: 0.25, bass: 0.20, mid: 0.15, high: 0.15 };
+      release = { sub: 0.25, bass: 0.2, mid: 0.15, high: 0.15 };
     } else if (profile === "standard") {
       attack = { sub: 0.45, bass: 0.35, mid: 0.25, high: 0.4 };
-      release = { sub: 0.10, bass: 0.08, mid: 0.06, high: 0.05 };
-    } else { // dynamic (default)
+      release = { sub: 0.1, bass: 0.08, mid: 0.06, high: 0.05 };
+    } else {
+      // dynamic (default)
       attack = { sub: 0.55, bass: 0.45, mid: 0.35, high: 0.5 };
       release = { sub: 0.12, bass: 0.1, mid: 0.08, high: 0.07 };
     }
@@ -431,7 +447,7 @@ export class AudioEngine {
       const target = clamp((raw[k] / this.adaptiveMax) * sens);
       const prev = this.smoothed[k];
       let coeff = target > prev ? attack[k] : release[k];
-      
+
       // Apply frequency softening (0 = aggressive/instant, 1 = extremely smooth)
       const soft = audioState.softening;
       // map soft (0..1) to a multiplier for the interpolation coefficient
@@ -453,10 +469,10 @@ export class AudioEngine {
     audioState.high = this.smoothed.high;
     audioState.level = clamp(rms * 2.6 * sens);
     audioState.time = elapsed;
-    const activeBpm = audioState.bpm > 40 ? audioState.bpm : (audioState.synthBpm || 132);
-    const totalBeats = (elapsed * activeBpm) / 60.0;
-    audioState.masterBeat = totalBeats;
-    audioState.beatPhase = totalBeats % 1.0;
+    const activeBpm = audioState.bpm > 40 ? audioState.bpm : audioState.synthBpm || 132;
+    this.beatClock = advanceBeatClock(this.beatClock, dt, activeBpm);
+    audioState.masterBeat = this.beatClock;
+    audioState.beatPhase = this.beatClock % 1.0;
 
     // spectrum mirror for the HUD (already 0..255)
     audioState.spectrum.set(this.freqData.subarray(0, audioState.spectrum.length));
@@ -483,16 +499,19 @@ export class AudioEngine {
       if (this.lastBeatAt > 0) {
         this.beatTimes.push(sinceLast);
         if (this.beatTimes.length > 16) this.beatTimes.shift();
-        const sorted = [...this.beatTimes].sort((x, y) => x - y);
-        const median = sorted[Math.floor(sorted.length / 2)];
-        if (median > 0.24 && median < 1.2) {
-          const target = clamp(60 / median, 60, 200);
-          audioState.bpm = audioState.bpm ? lerp(audioState.bpm, target, 0.25) : target;
+        const estimate = estimateBpm(this.beatTimes);
+        if (estimate) {
+          this.bpmConfidence = estimate.confidence;
+          // only steering when reasonably locked — avoids drunken tempo drift
+          if (estimate.confidence > 0.55) {
+            audioState.bpm = audioState.bpm ? lerp(audioState.bpm, estimate.bpm, 0.2) : estimate.bpm;
+          }
         }
       }
       this.lastBeatAt = now;
     } else if (sinceLast > 2.5) {
       audioState.bpm = lerp(audioState.bpm, 0, 0.05);
+      this.bpmConfidence = Math.max(0, this.bpmConfidence - dt * 0.5);
     }
 
     audioState.beat = Math.max(0, audioState.beat - dt * 2.9);
