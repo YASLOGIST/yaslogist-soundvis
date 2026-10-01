@@ -15,7 +15,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "og": "python3 scripts/generate_og.py"
   },
   "dependencies": {
     "@react-three/fiber": "^9.3.0",
