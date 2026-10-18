@@ -1,472 +1,172 @@
-<div align="center">
-
-<br/>
-
-<img src="./assets/readme/yaslogist-hero.gif" alt="YASLOGIST SOUNDVIS — animated cinematic hero: icosahedral core with travelling signal pulses, three rotating portal rings, orbital particle bands, a bottom-left spectrum and the YASLOGIST signature panel, looping every 7.68 s" width="100%"/>
-
-<sub><i>Programmatically rendered loop · static poster: <a href="./assets/readme/yaslogist-hero.png">yaslogist-hero.png</a> · regenerate with <a href="./assets/readme/build_readme_assets.py">build_readme_assets.py</a></i></sub>
-
-<br/>
-
 # YASLOGIST SOUNDVIS
 
-### Audio-Reactive 3D Visualizer & Live VJ Performance Engine
+A browser-based audio-reactive 3D visualizer with live VJ controls for techno sets.
 
-**Technical Whitepaper · v1.0** &nbsp;·&nbsp; **[yaslogist.com](https://www.yaslogist.com)**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/yaslogist-hero.png">
+  <img alt="YASLOGIST SOUNDVIS artwork with a geometric core, portal rings and cyan HUD panels" src="assets/readme/yaslogist-hero.png">
+</picture>
 
-[![CI](https://github.com/YASLOGIST/yaslogist-soundvis/actions/workflows/ci.yml/badge.svg)](https://github.com/YASLOGIST/yaslogist-soundvis/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-65%20passing-00F0FF)
-![Node](https://img.shields.io/badge/node-%E2%89%A5%2020.19-0B5BFF)
-![Runtime network calls](https://img.shields.io/badge/runtime%20network%20calls-zero-00FFC8)
-![License](https://img.shields.io/badge/license-MIT-EAFCFF)
+*Existing brand artwork, not an application screenshot. [Asset renderer](assets/readme/build_readme_assets.py).*
 
-<img src="./assets/readme/yaslogist-divider.png" alt="" width="100%"/>
+The app connects Web Audio analysis to a Three.js scene, with a React control interface.
+Choose a generated synth loop, a local audio file, a microphone or a shared audio source.
 
-</div>
+## Capabilities
 
-## 00 · The System
+| Capability | Maturity | Implementation |
+| --- | --- | --- |
+| Synth, file, microphone and shared-audio inputs | Implemented | [AudioEngine](src/audio/AudioEngine.ts) |
+| FFT bands, waveform, beat detection and BPM estimation | Implemented | [AudioEngine](src/audio/AudioEngine.ts), [BPM](src/audio/bpm.ts) |
+| Shader tunnel, core, particles, portal rings and post-processing | Implemented | [Scene](src/three/Scene.tsx), [shaders](src/three/shaders.ts) |
+| Look slots, JSON import/export and URL sharing | Implemented | [Presets](src/presets/lookPresets.ts), [HUD](src/ui/Hud.tsx) |
+| MIDI macros and pad controls | Implemented | [MidiManager](src/midi/MidiManager.ts) |
+| PNG stills, video with source audio and projector mirror | Implemented | [Recorder](src/media/Recorder.ts), [output window](src/output/outputWindow.ts) |
 
-**YASLOGIST SOUNDVIS** is a standalone, hardware-accelerated **audio-reactive 3D visualizer and live VJ performance engine** engineered for industrial, acid, and melodic techno. It converts live audio — internal synth, microphone, system loopback, or file playback — into a raymarched, beat-phase-locked WebGL2 stage at a stutter-free 60+ FPS, inside a single self-contained HTML file that runs fully offline.
+## Run locally
 
-The engine is built on a deliberately unusual contract: **React never re-renders inside the animation loop**. A singleton audio graph writes band energies into mutable typed state; the R3F frame loop reads that state and pipes it straight into GLSL uniforms and GPU instance buffers. The HUD is driven over a direct DOM bridge for the same reason. The result is zero reconcile work, zero allocation churn, and zero GC pressure on the performance-critical path.
+Use Node.js and npm. The [CI workflow](.github/workflows/ci.yml) provides a reference environment;
+no project-level Node.js engine requirement is declared in [package.json](package.json).
 
-| Headline metric | Value |
-| :-- | :-- |
-| Distribution format | **1 × `index.html`** (all code, fonts, shaders inlined) |
-| Runtime network calls | **0** — works off-grid, airplane mode, USB stick |
-| Particle budget | up to **200 000** points (GODMODE quality) |
-| Audio analysis | FFT-1024 → 512 bins, 4-band split, smoothing 0.82 |
-| Visual language | 20 curated palettes × 12 morphable core geometries |
-| Look memory | 8 preset slots · F1–F8 · shareable `#look=` URLs · JSON I/O |
-| Hardware control | Web MIDI — CC 20–27 macro row, pads 36–47, hot-plug |
-| Safety | Photosensitive SAFE mode (~3 Hz flash ceiling, one keystroke) |
-| Verification | 65 unit tests · typecheck · lint · format · CI-gated build |
+From the repository root:
 
----
+```bash
+npm ci
+npm run dev
+```
 
-## Contents
+Open the address printed by Vite. The [development configuration](vite.config.ts) binds to all network
+interfaces and permits the `.e2b.app` preview domain; it does not set an explicit port.
 
-| | Section | | Section |
-| :-- | :-- | :-- | :-- |
-| 00 | [The System](#00--the-system) | 06 | [Control Reference](#06--control-reference) |
-| 01 | [System Architecture](#01--system-architecture) | 07 | [Getting Started](#07--getting-started) |
-| 02 | [Tech Stack](#02--tech-stack) | 08 | [Brand & Visual Assets](#08--brand--visual-assets) |
-| 03 | [Feature Matrix](#03--feature-matrix) | 09 | [Security & Privacy](#09--security--privacy) |
-| 04 | [Core Workflows](#04--core-workflows) | 10 | [Repository Map](#10--repository-map) |
-| 05 | [Safety & Performance](#05--safety--performance-engineering) | 11 | [Engineering Status](#11--engineering-status) |
+At the boot screen, choose **ENTER THE VOID ▸** to use the built-in generator.
+For a local track, drag an audio file onto the page or use the file control.
+Microphone capture needs browser permission and HTTPS; shared-audio capture needs an audio track
+in the browser's screen/tab-sharing selection. Microphone and shared-audio monitoring are muted
+in the app to prevent feedback. See [source acquisition](src/audio/AudioEngine.ts).
 
-<img src="./assets/readme/yaslogist-divider.png" alt="" width="100%"/>
+### Development checks
 
-## 01 · System Architecture
+These commands are defined in [package.json](package.json) and invoked by [CI](.github/workflows/ci.yml):
 
-### 1.1 Design Invariants
+```bash
+npm run typecheck
+npm run lint
+npm run format:check
+npm test
+npm run build
+```
 
-| # | Invariant | Enforcement |
-| :- | :-- | :-- |
-| I-1 | **No React in the frame loop.** State that changes at 60 Hz lives outside the component tree. | `audioState` singleton + `hudBridge` direct-DOM writes (`src/audio/state.ts`) |
-| I-2 | **One render, one GPU pipeline.** Projector mirroring reuses `canvas.captureStream()` instead of a second context. | `src/output/outputWindow.ts` |
-| I-3 | **Every external input is hostile until proven otherwise.** Persisted settings, imported presets, share URLs and MIDI values all pass one declarative sanitizer. | `sanitizeSettings()` + `parseLook()` |
-| I-4 | **The show must survive weak hardware and GPU faults.** Tiered quality governor, photosensitivity limiter, fault bus + boundary with auto-recovery. | `perfBridge`, `src/three/safety.ts`, `src/ui/faultBus.ts`, `src/ui/ErrorBoundary.tsx` |
-| I-5 | **Offline is a feature, not a constraint.** No CDN, no telemetry, fonts bundled, single-file build. | `vite-plugin-singlefile`, zero runtime `fetch` |
+[Vitest configuration](vitest.config.ts) selects TypeScript test files under `src/` in a Node environment.
+The unit tests exercise BPM math, settings sanitization/storage, preset transport, MIDI maps/scaling
+and safety-limit helpers. They do not establish browser, GPU or hardware compatibility.
 
-### 1.2 Component Topology
+## Structure and data flow
+
+*How do input selection and audio analysis reach the visuals and capture outputs?*
 
 ```mermaid
 flowchart LR
-  subgraph INPUT["Audio Input"]
-    SYNTH["Internal Synth<br/>132 BPM acid loop"]
-    MIC["Microphone"]
-    SYS["System Loopback"]
-    FILE["File Playback"]
-  end
-
-  subgraph DSP["AudioEngine · Web Audio graph"]
-    AN["AnalyserNode<br/>FFT 1024 · smoothing 0.82"]
-    BANDS["4-band split<br/>sub · bass · mid · high"]
-    TR["RMS + transient detectors"]
-    BPM["Auto-BPM estimator<br/>octave folding 70–180"]
-  end
-
-  STATE[("audioState<br/>mutable typed buffers<br/>(React-free)")]
-  BRIDGE[/"hudBridge<br/>direct-DOM writes"/]
-
-  subgraph GPU["R3F · Three.js WebGL2 stage"]
-    FR["useFrame loop"]
-    UNI["ShaderMaterial uniforms<br/>instanced buffers"]
-    SCN["Scene: tunnel · core · particles<br/>portal rings · synapses"]
-    PP["EffectComposer<br/>bloom · CA · noise · scanlines · vignette"]
-  end
-
-  HUD["HUD<br/> Tailwind glass dock + analysis console"]
-  MIDI["MidiManager"]  -->|CC scale via sanitizer spec| PATCH["settings patch"]
-  KEY["Keyboard surface"] --> PATCH
-  PATCH --> GPU
-
-  INPUT --> DSP
-  DSP --> STATE
-  DSP --> BRIDGE
-  STATE --> FR
-  FR --> UNI --> SCN --> PP
-  PP --> OUT["WebGL canvas"]
-  OUT -->|"captureStream 60 fps"| PROJ["Projector window"]
-  OUT --> SNAP["PNG snapshot · MediaRecorder"]
-  BRIDGE --> HUD
+  Main["src/main.tsx"] -->|mounts App| App["src/App.tsx"]
+  App -->|input mode and optional File| Engine["src/audio/AudioEngine.ts"]
+  App -->|VisualSettings| Scene["src/three/Scene.tsx"]
+  Scene -->|per-frame update call| Engine
+  Engine -->|bands, waveform and beat state| State["src/audio/state.ts"]
+  State -->|audioState to shader uniforms| Scene
+  Scene -->|canvas via App| Recorder["src/media/Recorder.ts"]
+  Engine -->|audio MediaStream via App| Recorder
+  Scene -->|canvas via App| Output["src/output/outputWindow.ts"]
 ```
 
-### 1.3 Subsystem Reference
+[AudioDriver](src/three/Scene.tsx) calls the audio engine from the frame loop.
+The engine writes analysis into shared `audioState`; scene components read it into material uniforms
+and geometry updates. [App](src/App.tsx) passes the exposed canvas to capture and output utilities.
+The projector window mirrors a canvas stream into a video element rather than rendering another scene.
 
-| Module | Responsibility | Key facts |
-| :-- | :-- | :-- |
-| `src/audio/AudioEngine.ts` | Source acquisition, FFT analysis, band energies, RMS, transients | FFT 1024 → 512 bins; smoothing 0.82; typed AudioEngineError surfaces |
-| `src/audio/bpm.ts` | Tempo estimation from inter-beat intervals | Pure math, unit-testable, no Web Audio dependency; median + octave fold |
-| `src/audio/DemoSynth.ts` | Built-in deterministic 132 BPM techno loop | Sub-kick, 303 acid line, 909 hats, noise sweep; tempo clamp 60–200 |
-| `src/audio/state.ts` | Global mutable state, settings schema, quality presets, 20 palettes | Sanitizer spec doubles as MIDI scaling table; legacy key migration built in |
-| `src/three/Scene.tsx` | Declarative scene graph: backdrop, tunnel, core, rings, particles, towers, shockwaves | Per-quality raymarch steps; `perfBridge` draw-range control |
-| `src/three/shaders.ts` | Custom GLSL 3.0 library | Ashima simplex noise, FBM, SDF tunnel, plasma, gamma pass |
-| `src/three/safety.ts` | Photosensitivity limiter math | Constants-driven; pure functions, fully unit-tested |
-| `src/presets/lookPresets.ts` | Look bank: 8 slots, base64url share links (`#look=…`), JSON transport | Versioned (`PRESET_VERSION = 1`), hardened `parseLook` validator |
-| `src/midi/MidiManager.ts` | Web MIDI hot-plug surface | CC 20–27 → 8 macros; pads 36–47 → palette/zen/SAFE/preset actions |
-| `src/media/Recorder.ts` | PNG stills + MediaRecorder video mux | VP9→VP8→H.264→MP4 codec negotiation; 60 fps canvas stream |
-| `src/output/outputWindow.ts` | Borderless projector mirror | One GPU context; click-to-fullscreen; close-to-stop |
-| `src/ui/Hud.tsx` | Glassmorphism control dock, spectrum console, VU meters | Zen mode collapse; toasts via fault bus |
-| `src/ui/faultBus.ts` · `src/ui/ErrorBoundary.tsx` | Global fault telemetry + render-loop isolation | Auto-recovery tiers for post-processing failures |
-| `src/App.tsx` | Boot gate, settings persistence, keyboard surface, governor | Stage memoized — re-renders only on real settings deltas |
+<details>
+<summary>Module guide and controls</summary>
 
----
+| Path | Responsibility |
+| --- | --- |
+| [src/main.tsx](src/main.tsx), [src/App.tsx](src/App.tsx) | Mounting, boot, input selection and keyboard handlers |
+| [src/audio/](src/audio/) | Audio graph, generator, BPM math and settings |
+| [src/three/](src/three/) | Scene layers, GLSL and selected safety limits |
+| [src/ui/Hud.tsx](src/ui/Hud.tsx) | Settings dock, preset file controls and sharing |
+| [src/presets/](src/presets/) | Look extraction, validation and local bank |
+| [src/midi/](src/midi/) | Web MIDI input handling |
+| [src/media/](src/media/), [src/output/](src/output/) | Downloads, recording and projector mirroring |
+| [src/ui/faultBus.ts](src/ui/faultBus.ts), [ErrorBoundary](src/ui/ErrorBoundary.tsx) | Fault routing and recovery interface |
 
-## 02 · Tech Stack
+Keyboard handlers are in [App](src/App.tsx):
 
-### 2.1 Runtime
+- `Space`: toggle synth or file playback; `H`: toggle the HUD; `F`: toggle fullscreen.
+- `P`: save a PNG; `R`: start/stop recording; `O`: toggle the projector window.
+- `F1`–`F8`: recall a look; `Shift` + `F1`–`F8`: store one.
+- `1`–`9` and `0`: select the first ten palettes; `G`: toggle glitch; `S`: toggle SAFE mode.
+- `A`: toggle the performance governor; `L`: toggle Auto-Look; `Z`: toggle Zen mode.
+- Left/right arrows: seek a file backward/forward; `?`: open help; `Escape`: close help.
 
-| Layer | Technology | Version | Role |
-| :-- | :-- | :-- | :-- |
-| Language | TypeScript (strict) | 5.9.3 | All sources typed; `tsc --noEmit` gate on every build |
-| UI shell | React | 19.2.6 | Stage, dock, boundaries — memoized outside the hot loop |
-| 3D renderer | Three.js | 0.180.x | WebGL2 pipeline, instancing, dynamic buffers, `ShaderMaterial` |
-| React-3D bridge | @react-three/fiber | 9.3.0 | Declarative scene + `useFrame` loop |
-| Post-processing | postprocessing + @react-three/postprocessing | 6.37.8 / 3.0.4 | Bloom, ChromaticAberration, Glitch, Noise, Scanline, Vignette |
-| Shading | GLSL ES 3.0 | — | Custom SDF/plasma/particle programs, branchless FX math |
-| Audio | Web Audio API | native | AnalyserNode FFT, oscillator/noise synthesis, `AudioContext` |
-| CSS | Tailwind CSS | 4.1.17 | Glass utility layer, custom thin scrollbars, dock layout |
-| Class combiner | clsx + tailwind-merge | 2.1.1 / 3.4.0 | `cn()` helper for conditional UI classes |
+The [MIDI map](src/midi/MidiManager.ts) assigns CC 20–27 to bloom, crystalline glitch, speed,
+intensity, trails, particle size, core size and sensitivity. Notes 36–39 select palette/Zen/SAFE
+actions; notes 40–47 recall look slots. Enable MIDI through the HUD; browser access may be refused.
 
-### 2.2 Toolchain
+</details>
 
-| Stage | Tool | Version | Notes |
-| :-- | :-- | :-- | :-- |
-| Build / dev server | Vite | 7.3.2 | HMR dev loop; Node ≥ 20.19 required |
-| Bundling | vite-plugin-singlefile | 2.3.0 | Inlines JS/CSS/fonts → one HTML artifact |
-| Unit tests | Vitest | 4.0.15 | 65 tests across 5 suites, no DOM required |
-| Lint | ESLint + typescript-eslint + react-hooks | 9.39.2 / 8.48.1 / 7.0.1 | Flat config |
-| Format | Prettier | 3.7.4 | `format:check` enforced in CI |
-| CI | GitHub Actions (Node 22) | — | typecheck → lint → format → test → build → artifact |
-
-### 2.3 Target Environment
-
-| Capability | Minimum | Used for |
-| :-- | :-- | :-- |
-| WebGL2 + float textures | required | Entire render pipeline |
-| Web Audio API | required | Analysis + internal synth |
-| MediaRecorder + `canvas.captureStream` | optional | Video recording, projector mirror |
-| Web MIDI | optional | Hardware control surface |
-
----
-
-## 03 · Feature Matrix
-
-| # | Subsystem | Capability | Specification / Behaviour | Control surface |
-| :- | :-- | :-- | :-- | :-- |
-| F-01 | **Signal Analysis** | Real-time FFT | 1024-sample window → 512 bins ≈ 46.9 Hz resolution @ 48 kHz; smoothing 0.82 | automatic |
-| F-02 | **Signal Analysis** | 4-band isolation | sub 20–120 Hz · bass 120–400 Hz · mid 400–2.5 kHz · high 5–16 kHz | automatic |
-| F-03 | **Signal Analysis** | Transient dynamics | Per-band attack/release envelopes (e.g. kick-fast attack 0.85, slow release 0.25) | EQ profile selector (*Smooth · Standard · Dynamic · Hyper*) |
-| F-04 | **Tempo** | Auto-BPM | Median of inter-beat intervals, octave-folded into 70–180 BPM, outlier-rejected confidence score | automatic + Tap-BPM |
-| F-05 | **Tempo** | Master clock | Phase-integrated clock: tempo changes accelerate the visual phase smoothly — zero jumps | governed by F-04 confidence |
-| F-06 | **Core Geometry** | 12 morphable bodies | Icosahedron, Torus Knot, Sphere, Octahedron, Dodecahedron, Tetrahedron, Diamond, Hex Prism, Tech Ring, Hyper Knot, Liquid-Metal displacement | dock / preset / MIDI-adjacent |
-| F-07 | **Colour** | 20 curated palettes | Laser Cyan → Neon Platinum; keys `1–9`/`0` hot-select first ten; Auto-Look advances on 32-beat phrases | dock / keys / pads / presets |
-| F-08 | **Quantum Portal** | Multi-ring plasma torus | Counter-rotating instanced rings; angular velocity locked to the high band; Fresnel rim glow | tied to F-02 highs |
-| F-09 | **Neural Synapses** | Radial filament bursts | `THREE.LineSegments` burst fired when bass/sub transient peaks exceed 0.58 | tied to F-02/F-03 |
-| F-10 | **Impact Dynamics** | “Drop” detection | Broadband RMS + sub surge ⇒ FOV punch (+22°, spring-damped) and 3.0× bloom flare | automatic |
-| F-11 | **Crystalline Glitch** | Chromatic aberration | RGB dispersion with audio-band flutter; full-screen glitch bursts (`G`) | dock / key / CC 21 |
-| F-12 | **SAFE Mode** | Photosensitive protection | Strobe ≤ ~3 Hz · flash ≤ 1.25× · FOV punch × 0.3 · chroma spike × 0.5 · glitch bursts suppressed | `S` key / dock / pad 39 |
-| F-13 | **Look Bank** | Presets | 8 slots capture aesthetics (not machine prefs); click recall ⇧-store alt-clear; `F1–F8` / `⇧F1–F8` | keys / dock / pads 40–47 |
-| F-14 | **Look Bank** | Transport | JSON export/import + `#look=` base64url share links; all inbound data passes the hardened validator | dock buttons |
-| F-15 | **MIDI Surface** | Zero-config controller | CC 20–27 → bloom · glitch · speed · intensity · trails · particle size · core size · sensitivity; pads 36–47 → palettes/zen/SAFE/slots; hot-plug status in dock | `∘ MIDI` dock button |
-| F-16 | **Output** | Projector mirror | `captureStream(60)` into borderless pop-out; click = fullscreen; close = end mirror | `O` key / `⧉ OUT` |
-| F-17 | **Capture** | Stills & video | Full-res PNG from the live framebuffer (`preserveDrawingBuffer`); WebM (VP9/VP8/H.264) or MP4 via MediaRecorder with muxed source audio | `P` / `R` keys, dock |
-| F-18 | **HUD** | Glass control dock | Collapsible, custom scrollbar, live spectrum + oscilloscope + VU meters | `H` hide / `Z` zen |
-| F-19 | **Zen Mode** | Projection-clean viewport | Full interface collapse to a minimal trigger badge | `Z` / dock / pad 38 |
-| F-20 | **Governor** | Adaptive performance | Auto quality: DPR, particle draw-range and FX passes scale to hold 60+ FPS | `A` key / quality tier |
-| F-21 | **Quality Tiers** | 4 presets | ECO → GODMODE (see §5.2) | dock selector |
-| F-22 | **Demo Synth** | Self-contained audio source | Deterministic 132 BPM acid loop: sub-kick, 303, 909 hats, noise sweep; no asset download | source selector / tap tempo |
-| F-23 | **Storage** | Settings persistence | Sanitized JSON in `localStorage`, transparent migration from `void-reactor.settings.v1` | automatic |
-| F-24 | **Resilience** | Fault containment | Fault bus + boundary; post-processing degradation tiers; global error traps with operator toasts | automatic |
-
----
-
-## 04 · Core Workflows
-
-### 4.1 The Frame Pipeline (audio → photons)
-
-Every animation frame executes the same deterministic sequence:
-
-```mermaid
-sequenceDiagram
-  participant AC as AudioContext
-  participant AN as AnalyserNode (FFT 1024)
-  participant AE as AudioEngine
-  participant ST as audioState (mutable)
-  participant RF as useFrame (R3F)
-  participant SH as GLSL uniforms / instances
-  participant PP as EffectComposer
-  participant HB as hudBridge
-
-  loop ~every 16.6 ms (vsync)
-    AC->>AN: render quantum
-    AN->>AE: byte freq + time-domain data
-    AE->>AE: bandEnergy sub·bass·mid·high<br/>RMS, transients, BPM intervals
-    AE->>ST: write bands · RMS · phase · peaks (no allocation)
-    RF->>ST: read latest frame state
-    RF->>SH: push uniforms + instance matrices
-    SH->>PP: scene pass
-    PP->>PP: bloom · chromatic aberration · noise · scanline · vignette · gamma
-    AE->>HB: throttled stats
-    HB-->>HUD: direct DOM mutation (no React render)
-  end
-```
-
-**Why it scales:** the loop performs zero React reconciliation, zero object allocation beyond ring-buffer overwrites, and one draw pipeline even while mirroring to a projector window.
-
-### 4.2 Boot & Input Acquisition
-
-1. **Boot gate** — feature-detect WebGL2, AudioContext, float render targets; hard-stop with a typed error panel if the GPU stack is missing.
-2. **Source select** — `synth` (instant, offline) · `mic` (`getUserMedia`) · `system` (screen-share loopback) · `file` (user’s track, with `←`/`→` ±5 s seek).
-3. **Graph wiring** — chosen source → AnalyserNode (+ studio-safe monitor path for file playback).
-4. **Failure paths** — permission denials, missing devices and decode errors surface as typed `AudioEngineError` toasts; built-in synth always remains as a zero-dependency fallback.
-
-### 4.3 Look Preset Lifecycle
-
-| Stage | Action | Guarantee |
-| :-- | :-- | :-- |
-| Capture | `⇧`+click slot (or `⇧F1–F8`) | `extractLook()` snapshots only aesthetic fields via `LOOK_FIELDS` |
-| Persist | automatic | `localStorage` bank, versioned envelope (`PRESET_VERSION = 1`) |
-| Recall | click slot / `F1–F8` / pad 40–47 | values re-enter through `applyLook()` → sanitizer-constrained patch |
-| Share | copy link | `encodeLook()` → base64url `#look=…` — entire look travels in the URL |
-| Import | JSON file / shared URL | `parseLook()` structural validation; anything malformed is rejected, never coerced |
-| Clear | `alt`+click slot | slot returns to empty |
-
-**Security property:** the sanitizer spec (ranges, enums, integer fields, type matching) is the *same* table used by MIDI CC scaling and settings persistence — one hardened boundary for every untrusted value.
-
-### 4.4 MIDI Live Surface (zero mapping setup)
-
-| Hardware event | Engine action |
-| :-- | :-- |
-| CC 20–27 | bloom · crystalline glitch · speed · intensity · trails · particle size · core size · input sensitivity |
-| Note 36 / 37 | palette next / previous |
-| Note 38 / 39 | zen toggle / SAFE toggle |
-| Notes 40–47 | recall look slots 1–8 |
-
-CC values are scaled into persisted-safe ranges *by the sanitizer spec itself*, so a controller can never push an out-of-domain value. Devices hot-plug mid-set; the dock header shows live connection state.
-
-### 4.5 Capture & Output
-
-| Workflow | Trigger | Behaviour |
-| :-- | :-- | :-- |
-| PNG snapshot | `P` | Reads the live framebuffer (`preserveDrawingBuffer: true`), downloads lossless full-res PNG |
-| Video clip | `R` | `canvas.captureStream(60)` + source audio → MediaRecorder; codec negotiation VP9 → VP8 → H.264 → MP4 fallback |
-| Projector mirror | `O` | Mirror-only pop-out window; operator keeps dock & analysis console; click mirror for fullscreen |
-
-### 4.6 Resilience & Recovery
-
-1. **Governor** monitors frame cost and steps DPR / particle draw-range / FX passes up or down to hold 60 FPS.
-2. **Post-processing fault** → `onRenderFault` on the fault bus → effect-tier degradation (effects shed, scene persists).
-3. **Unhandled errors** → global traps → operator toast; render boundary keeps the stage mounted.
-4. **SAFE mode** is a mathematical clamp applied *inside* the shader-driving values (§5.1), not a post-hoc flag — unsafe peaks are unreachable while armed.
-
----
-
-## 05 · Safety & Performance Engineering
-
-### 5.1 Photosensitive SAFE Mode (`S`)
-
-| Constant | Value | Effect |
-| :-- | :-: | :-- |
-| `SAFE_STROBE_HZ` | 3 Hz | Script-level ceiling on every strobe oscillator (Harding & Jeavons guidance) |
-| `SAFE_FLASH_CEIL` | 1.25× | Drop flash clamp (unarmed path spikes to 3.0×) |
-| `SAFE_PUNCH_SCALE` | 0.3 | Camera FOV punch dampened 70 % |
-| `SAFE_CHROMA_SCALE` | 0.5 | Chromatic-aberration flutter halved |
-
-Pure functions, exhaustively unit-tested (`src/three/__tests__/safety.test.ts`).
-
-### 5.2 Quality Presets
-
-| Tier | DPR range | Raymarch steps | Particles |
-| :-- | :-- | :-: | :-: |
-| ECO | 0.6 – 0.9 | 44 | 42 000 |
-| BALANCED | 0.85 – 1.25 | 66 | 90 000 |
-| ULTRA | 1.0 – 2.0 | 92 | 160 000 |
-| GODMODE | 1.25 – 2.5 | 128 | 200 000 |
-
-### 5.3 Performance Practices
-
-- Typed, pre-allocated analysis buffers; ring-buffer beat history — no per-frame allocation.
-- Particles rendered through a single `BufferGeometry` with `setDrawRange` budget control (`perfBridge`).
-- `preserveDrawingBuffer` enabled solely to make frame-accurate PNG capture zero-cost at capture time.
-- Branchless GLSL; quality-dependent raymarch step counts; no tone-mapping pass (identity pipeline + custom gamma effect).
-- Boot-time watchdog renders a probe frame and can pre-emptively disable the composer on pathological GPUs.
-
----
-
-## 06 · Control Reference
-
-### 6.1 Keyboard
-
-| Key | Action | Key | Action |
-| :-- | :-- | :-- | :-- |
-| <kbd>SPACE</kbd> | Play / pause source | <kbd>1</kbd>–<kbd>9</kbd>/<kbd>0</kbd> | Palette quick-select |
-| <kbd>H</kbd> | Toggle HUD | <kbd>F1</kbd>–<kbd>F8</kbd> | Recall look slot |
-| <kbd>Z</kbd> | Zen mode | <kbd>⇧</kbd>+<kbd>F1</kbd>–<kbd>F8</kbd> | Store look slot |
-| <kbd>S</kbd> | SAFE mode | <kbd>P</kbd> | PNG snapshot |
-| <kbd>O</kbd> | Projector pop-out | <kbd>R</kbd> | Record video clip |
-| <kbd>F</kbd> | Fullscreen | <kbd>G</kbd> | Glitch bursts |
-| <kbd>A</kbd> | Performance governor | <kbd>L</kbd> | Auto-Look phrases |
-| <kbd>←</kbd> / <kbd>→</kbd> | Seek ±5 s | <kbd>?</kbd> | Shortcuts & diagnostics |
-
-### 6.2 MIDI — per §4.4 (CC 20–27 · pads 36–47), zero configuration.
-
----
-
-## 07 · Getting Started
-
-> **Requirement:** Node.js ≥ 20.19 (Vite 7) · npm / pnpm / yarn
+## Build and distribution
 
 ```bash
-# 1 · enter the repository
-cd yaslogist-soundvis
-
-# 2 · install
-npm install
-
-# 3 · develop with HMR        → http://localhost:5173
-npm run dev
-
-# 4 · production single-file build  → dist/index.html
-npm run build && npm run preview
+npm run build
+npm run preview
 ```
 
-Quality gates (all enforced in CI, `.github/workflows/ci.yml`):
+The build script runs TypeScript checking before Vite. [Vite configuration](vite.config.ts) enables
+`vite-plugin-singlefile`; [CI](.github/workflows/ci.yml) uploads `dist/index.html` as the distribution
+artifact. The preview command serves the production build locally.
 
-```bash
-npm run typecheck     # strict TypeScript
-npm run lint          # ESLint: typescript-eslint + react-hooks
-npm run format:check  # Prettier
-npm test              # Vitest — 65 assertions over the trust boundaries
-npm run build         # typecheck-gated single-file artifact
-```
+Fonts are [bundled locally](src/index.css). The HTML shell also references Open Graph images in
+[public/](public/); retain those assets when hosting the page if you need its social-preview metadata.
+No deployment workflow or hosting-specific configuration is committed in this repository.
 
-Deploy by copying `dist/index.html` anywhere static: Cloudflare Pages, Vercel, Netlify, GitHub Pages — or open it from a USB stick.
+## Status and limitations
 
----
+- **Implemented:** the [performance governor](src/three/Scene.tsx) adjusts pixel ratio and particle
+  draw range in response to measured frame rate. This is adaptation, not a frame-rate guarantee.
+- **Partial — SAFE mode:** [scene code](src/three/Scene.tsx) applies [helpers](src/three/safety.ts)
+  to the background strobe rate, drop flash and camera punch, and suppresses automatic glitch bursts.
+  This covers selected effects, not a verified photosensitivity guarantee. The
+  [default settings](src/audio/state.ts) leave SAFE mode off and strobes on.
+- **Browser-dependent:** [system capture](src/audio/AudioEngine.ts) fails if no audio track is shared;
+  local file playback depends on the browser's decoder. [Recording](src/media/Recorder.ts) requires
+  `MediaRecorder` and canvas streaming, and selects a supported WebM or MP4 MIME type.
+  [Projector output](src/output/outputWindow.ts) requires canvas streaming and an allowed popup;
+  [MIDI](src/midi/MidiManager.ts) requires Web MIDI access.
+- **Unverified here:** application behavior, browser/hardware support, production output and current
+  CI results. This README was rebuilt by reading source and configuration, without executing the app.
 
-## 08 · Brand & Visual Assets
+## Security and privacy
 
-The README hero, poster, signature and divider are rendered by one deterministic script, so every visual shares one palette, one typeface and one motion philosophy: the engine's own cyan ↔ ultraviolet language, the bundled JetBrains Mono typeface, and HUD-style glass panels.
+Local audio files are loaded through object URLs in [AudioEngine](src/audio/AudioEngine.ts), and
+recordings are downloaded through browser-created blobs in [Recorder](src/media/Recorder.ts).
+Settings and the look bank use `localStorage`; look-sharing URLs encode aesthetic settings in the
+`#look=` fragment. See [settings storage](src/audio/state.ts) and [preset transport](src/presets/lookPresets.ts).
 
-| Asset | Format | Size | Usage |
-| :-- | :-- | :-- | :-- |
-| `assets/readme/yaslogist-hero.gif` | 96-frame seamless loop · 80 ms/frame · 7.68 s | 1200 × 450 | README hero (first visible element) |
-| `assets/readme/yaslogist-hero.png` | static poster, mid-loop frame | 1200 × 450 | fallback / still preview |
-| `assets/readme/yaslogist-signature.png` | static wordmark card | 900 × 180 | closing YASLOGIST signature |
-| `assets/readme/yaslogist-divider.png` | luminous section rule | 1200 × 24 | section separators |
-| `assets/readme/build_readme_assets.py` | renderer | — | regenerates all of the above |
-| `public/og-animated.gif` · `public/og-image.png` | Open Graph loop + poster | 1000 × 525 · 1200 × 630 | `og:image` / `twitter:image` (unchanged) |
+Persisted settings and imported looks pass through `sanitizeSettings()`, which clamps numeric ranges,
+filters unknown fields and falls back to defaults for invalid values. MIDI CC values are scaled
+using those ranges; they do not pass through the full settings sanitizer.
+These mechanisms do not constitute a security audit. See [settings validation](src/audio/state.ts),
+[preset validation](src/presets/lookPresets.ts) and [MIDI scaling](src/midi/MidiManager.ts).
 
-**What the hero shows** — an icosahedral core built with the same geometry as the engine's hero shape, with pulses travelling along its edges; three quantum-portal rings on different tilts; orbital particle bands; coordinate ticks; a scan line; a bottom-left spectrum that pulses on a 16-beat envelope; a transmission trace; and persistent HUD panels carrying the project name and the YASLOGIST signature. Every oscillator completes an integer number of cycles inside the loop, so the last frame connects back to the first.
+## Contributing
 
-**Regenerate** (deterministic; Python 3.10+):
+Use the development checks above when preparing changes. The repository's
+[CI workflow](.github/workflows/ci.yml) runs them for pushes and pull requests.
 
-```bash
-python3 -m pip install pillow numpy fonttools brotli
-python3 assets/readme/build_readme_assets.py
-```
+## License and attribution
 
-The existing Open Graph media in `public/` are produced by `scripts/generate_og.py` and are not modified by the README renderer.
+[package.json](package.json) declares MIT and names Ahmed Yasser (YASLOGIST) as author.
+There is no root `LICENSE` file in the tracked tree; the manifest declaration is not a substitute
+for the missing license text.
 
-<img src="./assets/readme/yaslogist-divider.png" alt="" width="100%"/>
+The bundled JetBrains Mono fonts credit the JetBrains Mono Project Authors and include the
+[SIL Open Font License](src/assets/fonts/OFL.txt).
 
-## 09 · Security & Privacy
-
-- **Zero runtime network** — no analytics, no CDN, no font fetch; the artifact makes no outbound requests, period.
-- **Single hardened boundary** — `sanitizeSettings()` validates every persisted, imported, shared or controller-originated field against one declarative spec; malformed data is rejected, never repaired on-device.
-- **No secrets in tree** — there is nothing to leak: the engine needs no keys, tokens or accounts.
-- **Fonts** — JetBrains Mono is bundled under the SIL Open Font License (`src/assets/fonts/OFL.txt`).
-
----
-
-## 10 · Repository Map
-
-```
-yaslogist-soundvis
-├── index.html                  # boot shell + Open Graph / Twitter meta
-├── assets/readme/              # cinematic README hero · poster · signature · divider (see §08)
-├── public/                     # og-animated.gif · og-image.png (generated, see §08)
-├── scripts/generate_og.py      # deterministic brand-media renderer (beat-accurate loop)
-├── src/
-│   ├── main.tsx · App.tsx      # boot gate · settings · keyboard · governor (stage memoized)
-│   ├── audio/                  # AudioEngine · state/schema · bpm · DemoSynth (+ tests)
-│   ├── three/                  # Scene (stage) · shaders (GLSL lib) · safety limiter (+ tests)
-│   ├── presets/                # look bank: slots · transport · validator (+ tests)
-│   ├── midi/                   # MidiManager zero-config surface (+ tests)
-│   ├── media/                  # Recorder — PNG stills · MediaRecorder video
-│   ├── output/                 # projector pop-out mirror
-│   ├── ui/                     # Hud · faultBus · ErrorBoundary
-│   └── assets/fonts/           # JetBrains Mono (SIL OFL)
-├── .github/workflows/ci.yml    # typecheck · lint · format · test · build · artifact
-└── *.config.ts                 # vite · typescript · vitest · eslint · prettier
-```
-
----
-
-## 11 · Engineering Status
-
-Status reflects what is in the repository today. Nothing below is marked as shipped unless the source tree contains it.
-
-| Area | Status | Evidence |
-| :-- | :-- | :-- |
-| Audio analysis, band split, BPM estimation | ✅ Implemented | `src/audio/AudioEngine.ts`, `src/audio/bpm.ts` |
-| Built-in 132 BPM synth source | ✅ Implemented | `src/audio/DemoSynth.ts` |
-| WebGL2 scene, post-processing, governor | ✅ Implemented | `src/three/Scene.tsx`, `src/App.tsx` |
-| Photosensitivity SAFE limiter | ✅ Implemented, unit-tested | `src/three/safety.ts` |
-| Look presets, share links, JSON I/O | ✅ Implemented, unit-tested | `src/presets/lookPresets.ts` |
-| Web MIDI control surface | ✅ Implemented, unit-tested | `src/midi/MidiManager.ts` |
-| PNG snapshot and video capture | ✅ Implemented | `src/media/Recorder.ts` |
-| Projector mirror window | ✅ Implemented | `src/output/outputWindow.ts` |
-| Unit test suite | ✅ 65 test cases across 5 suites (counted in source) | `src/**/__tests__/` |
-| CI (typecheck, lint, format, test, build) | ✅ Configured | `.github/workflows/ci.yml` |
-| Cinematic README hero (GIF) | ✅ Rendered in this change | `assets/readme/yaslogist-hero.gif` |
-| Hero rendering inside the GitHub README view | ⚠️ Unverified in this environment | Frames inspected locally; not viewed in GitHub's renderer |
-| Passing CI status on the current commit | ⚠️ Not checked | Requires a GitHub Actions run |
-| Live app behaviour (audio, GPU, MIDI hardware) | ⚠️ Not executed in this change | Documentation-only change; no application code touched |
-| `LICENSE` file | ⚠️ Not present in the repository | MIT is declared in `package.json`; no license file is committed |
-
-<img src="./assets/readme/yaslogist-divider.png" alt="" width="100%"/>
-
-## License & Attribution
-
-**MIT License** (declared in `package.json`) — © Ahmed Yasser (YASLOGIST), architected & engineered.
-JetBrains Mono © the JetBrains Mono project, SIL Open Font License 1.1.
-
-<div align="center">
-
-<br/>
-
-<img src="./assets/readme/yaslogist-signature.png" alt="YASLOGIST — permanent creative signature · yaslogist.com" width="520"/>
-
-<br/>
-
-**[www.yaslogist.com](https://www.yaslogist.com)**
-
-*Built for the booth — offline, single-file, 60 FPS, zero excuses.*
-
-<br/>
-
-</div>
+Project attribution: [YASLOGIST](https://www.yaslogist.com).
